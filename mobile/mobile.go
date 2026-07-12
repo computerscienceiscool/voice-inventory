@@ -122,6 +122,36 @@ func (a *App) SaveConfig() error {
 	return a.cfg.Save(filepath.Join(a.dataDir, "config.json"))
 }
 
+// ConfigJSON returns the active device profile (§14) for a settings screen.
+func (a *App) ConfigJSON() (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return marshal(a.cfg)
+}
+
+// SetConfigJSON merges the given JSON over the active profile, validates,
+// and persists it. The operator id applies immediately; capture-affecting
+// fields (language, capture mode, thresholds, retention, sync endpoint)
+// apply the next time the app starts — the session is deliberately not
+// rebuilt mid-flight (see item 107). Returns an error on invalid config.
+func (a *App) SetConfigJSON(configJSON string) error {
+	a.mu.Lock()
+	merged := a.cfg
+	a.mu.Unlock()
+	if err := json.Unmarshal([]byte(configJSON), &merged); err != nil {
+		return fmt.Errorf("mobile: config json: %w", err)
+	}
+	if err := merged.Validate(); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.cfg = merged
+	a.sync = nil // endpoint/token may have changed; rebuild lazily
+	a.mu.Unlock()
+	a.s.SetOperator(merged.OperatorID)
+	return a.SaveConfig()
+}
+
 // SetOperator records the logged-in operator id (§3). Capture state and
 // any pending record are untouched — only new records pick up the id.
 func (a *App) SetOperator(operatorID string) error {

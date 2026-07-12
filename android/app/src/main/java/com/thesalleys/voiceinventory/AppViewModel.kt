@@ -197,6 +197,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun confirmRecord(id: String) = offMain { runCatching { app.confirmRecord(id) } }
     fun rejectRecord(id: String) = offMain { runCatching { app.rejectRecord(id) } }
 
+    fun editRecord(id: String, field: String, value: String, onDone: () -> Unit) = offMain {
+        runCatching { app.editRecord(id, field, value) }
+            .onSuccess { onDone() }
+            .onFailure { errors.value = it.message }
+    }
+
+    // --- settings (§14) ------------------------------------------------------
+
+    fun loadConfig(onResult: (String) -> Unit) = offMain {
+        runCatching { app.configJSON() }
+            .onSuccess(onResult).onFailure { errors.value = it.message }
+    }
+
+    /** Merge-and-persist; capture-affecting fields apply on next start. */
+    fun saveConfig(json: String, onDone: () -> Unit) = offMain {
+        runCatching { app.setConfigJSON(json) }
+            .onSuccess { onDone() }
+            .onFailure { errors.value = it.message }
+    }
+
     fun sync(onDone: (String) -> Unit) = offMain {
         runCatching {
             val push = app.syncPush()

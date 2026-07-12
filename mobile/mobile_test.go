@@ -224,3 +224,56 @@ func TestListJSONEmptyIsArray(t *testing.T) {
 		t.Errorf("empty list = %s, want observations:[]", out)
 	}
 }
+
+// Settings screens read and merge the device profile through the facade.
+func TestConfigRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	app, err := NewApp(dir, `{"device_id":"d1"}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+
+	cj, err := app.ConfigJSON()
+	if err != nil || !strings.Contains(cj, `"device_id":"d1"`) {
+		t.Fatalf("config json = %s, %v", cj, err)
+	}
+	if err := app.SetConfigJSON(`{"operator_id":"op-9","sync":{"endpoint":"https://x.example","batch_size":25}}`); err != nil {
+		t.Fatal(err)
+	}
+	cj, _ = app.ConfigJSON()
+	for _, want := range []string{`"operator_id":"op-9"`, `"endpoint":"https://x.example"`, `"device_id":"d1"`} {
+		if !strings.Contains(cj, want) {
+			t.Errorf("merged config missing %s: %s", want, cj)
+		}
+	}
+	// persists across restarts
+	app.Close()
+	app2, err := NewApp(dir, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app2.Close()
+	cj, _ = app2.ConfigJSON()
+	if !strings.Contains(cj, `"operator_id":"op-9"`) {
+		t.Errorf("config not persisted: %s", cj)
+	}
+	// new records carry the operator immediately
+	id, err := app2.AddManual(`{"item_text":"nuts"}`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pj, _ := app2.ListJSON("draft", 1)
+	if !strings.Contains(pj, `"operator_id":"op-9"`) {
+		t.Errorf("operator not applied: %s", pj)
+	}
+	_ = id
+	// invalid config rejected, active config untouched
+	if err := app2.SetConfigJSON(`{"language":"xx"}`); err == nil {
+		t.Error("invalid language should be rejected")
+	}
+	cj, _ = app2.ConfigJSON()
+	if !strings.Contains(cj, `"language":"en"`) {
+		t.Errorf("rejected config must not stick: %s", cj)
+	}
+}

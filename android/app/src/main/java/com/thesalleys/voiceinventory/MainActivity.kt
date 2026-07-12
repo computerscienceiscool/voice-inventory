@@ -33,7 +33,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface {
-                    var showReview by remember { mutableStateOf(false) }
+                    var screen by remember { mutableStateOf(Screen.Capture) }
                     val error by vm.errors.collectAsState()
                     LaunchedEffect(error) {
                         error?.let {
@@ -41,13 +41,21 @@ class MainActivity : ComponentActivity() {
                             vm.errors.value = null
                         }
                     }
-                    if (showReview) {
-                        BatchReviewScreen(vm) { showReview = false }
-                    } else {
-                        CaptureScreen(vm) { showReview = true }
+                    when (screen) {
+                        Screen.Capture -> CaptureScreen(
+                            vm,
+                            onOpenReview = { screen = Screen.Review },
+                            onOpenSettings = { screen = Screen.Settings },
+                            onOpenHelp = { screen = Screen.Help },
+                        )
+                        Screen.Review -> BatchReviewScreen(vm) { screen = Screen.Capture }
+                        Screen.Settings -> SettingsScreen(vm) { screen = Screen.Capture }
+                        Screen.Help -> HelpScreen(spanish = false) { screen = Screen.Capture }
                     }
                 }
             }
         }
     }
 }
+
+private enum class Screen { Capture, Review, Settings, Help }

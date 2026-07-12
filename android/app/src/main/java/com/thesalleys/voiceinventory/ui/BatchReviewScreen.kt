@@ -10,11 +10,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,15 +39,53 @@ private data class Rec(
     val syncRejected: String,
 )
 
+/** One-field editor for a queued record (§4.2 batch edit). */
+@Composable
+private fun RecordEditDialog(rec: Rec, onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
+    var field by remember { mutableStateOf("location") }
+    var value by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit record") },
+        text = {
+            Column {
+                Text(rec.summary, style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("location", "quantity", "item", "unit", "description").forEach { f ->
+                        FilterChip(selected = field == f, onClick = { field = f },
+                            label = { Text(f) })
+                    }
+                }
+                OutlinedTextField(value = value, onValueChange = { value = it },
+                    label = { Text("New $field") }, singleLine = true)
+            }
+        },
+        confirmButton = { Button(onClick = { onSave(field, value) }) { Text("Save") } },
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 /**
  * Batch review (§4.2): the queue with needs-review and backend-rejected
- * badges (TODO 087), per-record confirm/reject, and a sync trigger.
+ * badges (TODO 087), per-record confirm/reject/edit, and a sync trigger.
  */
 @Composable
 fun BatchReviewScreen(vm: AppViewModel, onBack: () -> Unit) {
     var records by remember { mutableStateOf(listOf<Rec>()) }
     var syncNote by remember { mutableStateOf("") }
     var reloadKey by remember { mutableStateOf(0) }
+    var editRec by remember { mutableStateOf<Rec?>(null) }
+
+    editRec?.let { rec ->
+        RecordEditDialog(
+            rec = rec,
+            onDismiss = { editRec = null },
+            onSave = { field, value ->
+                vm.editRecord(rec.id, field, value) { reloadKey++ }
+                editRec = null
+            },
+        )
+    }
 
     LaunchedEffect(reloadKey) {
         vm.listRecords("") { json ->
@@ -100,6 +141,7 @@ fun BatchReviewScreen(vm: AppViewModel, onBack: () -> Unit) {
                                 OutlinedButton(onClick = {
                                     vm.rejectRecord(rec.id); reloadKey++
                                 }) { Text("Reject") }
+                                OutlinedButton(onClick = { editRec = rec }) { Text("Edit") }
                             }
                         }
                     }

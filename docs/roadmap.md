@@ -7,9 +7,10 @@ items all fall into four buckets. Numbers reference the todo.
 ## 1. Native app work — needs Android/iOS toolchains
 
 The Go side of each item is finished and documented in
-[mobile-integration.md](mobile-integration.md), and a Compose shell
-scaffold now exists in `android/` (JNI bridge desktop-verified; Kotlin
-layer unbuilt — see android/README.md). What's left is the first SDK
+[mobile-integration.md](mobile-integration.md), and shell scaffolds now
+exist for both platforms — `android/` (capture, review with edit,
+settings, help; JNI bridge desktop-verified) and `ios/` (capture; same
+verified C bridge) — both unbuilt. What's left is the first SDK/Xcode
 build and device bring-up.
 
 | Item | Work | Notes |
@@ -33,6 +34,8 @@ build and device bring-up.
 | 065 | Confirm modernc.org/sqlite builds under gomobile on both OSes (proven on desktop only) |
 
 ## 3. Decisions — for the project owner / mentor
+
+Each has a concrete recommendation waiting in [proposals.md](proposals.md).
 
 | Item | Decision |
 |------|----------|
