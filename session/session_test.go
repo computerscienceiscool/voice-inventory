@@ -611,3 +611,113 @@ func TestPendingConcurrentWithCorrections(t *testing.T) {
 	}
 	<-done
 }
+
+// Batch review acting on the record under live review must never wedge the
+// session: it reconciles and re-arms.
+func TestOutOfBandStatusChanges(t *testing.T) {
+	dictate := func(f *fixture) *observation.Observation {
+		t.Helper()
+		*f.mock = asr.Mock{Results: []asr.Result{
+			asr.TextResult("five bags of washers in bin A-14", "en", 0.9),
+		}}
+		f.s.Arm()
+		_ = f.s.BeginUtterance()
+		f.s.FeedPCM(tone(0.5), 16000, 1)
+		f.s.EndUtterance()
+		p := f.s.Pending()
+		if p == nil {
+			t.Fatal("no pending record")
+		}
+		return p
+	}
+
+	t.Run("rejected elsewhere then confirm", func(t *testing.T) {
+		f := newFixture(t, nil, nil)
+		p := dictate(f)
+		if err := f.st.Reject(p.ID); err != nil { // batch review discards it
+			t.Fatal(err)
+		}
+		if err := f.s.Confirm(); err == nil {
+			t.Error("confirm should report the out-of-band discard")
+		}
+		if f.s.State() != StateArmed || f.s.Pending() != nil {
+			t.Errorf("session wedged: state=%s pending=%v", f.s.State(), f.s.Pending())
+		}
+	})
+
+	t.Run("confirmed elsewhere then voice yes", func(t *testing.T) {
+		f := newFixture(t, nil, nil)
+		p := dictate(f)
+		if err := f.st.Confirm(p.ID); err != nil { // batch review confirms it
+			t.Fatal(err)
+		}
+		if err := f.s.Confirm(); err != nil {
+			t.Errorf("confirming an already-confirmed record should succeed: %v", err)
+		}
+		if f.s.State() != StateArmed {
+			t.Errorf("state = %s", f.s.State())
+		}
+	})
+
+	t.Run("rejected elsewhere then scratch", func(t *testing.T) {
+		f := newFixture(t, nil, nil)
+		p := dictate(f)
+		_ = f.st.Reject(p.ID)
+		f.s.Scratch() // same outcome the operator wanted
+		if f.s.State() != StateArmed || f.s.Pending() != nil {
+			t.Errorf("session wedged after scratch: state=%s", f.s.State())
+		}
+	})
+
+	t.Run("rejected elsewhere then correction and redictate", func(t *testing.T) {
+		f := newFixture(t, nil, nil)
+		p := dictate(f)
+		_ = f.st.Reject(p.ID)
+		if err := f.s.CorrectField("location", "B-2"); err == nil {
+			t.Error("correction on a discarded record should error")
+		}
+		if f.s.State() != StateArmed || f.s.Pending() != nil {
+			t.Errorf("session wedged after correction: state=%s", f.s.State())
+		}
+		// and the next utterance dictates a fresh record normally
+		p2 := dictate(f)
+		if p2.ID == p.ID {
+			t.Error("new dictation should be a new record")
+		}
+	})
+}
+
+// The admin's RequiredFields choice must actually drive missing-field flags.
+func TestRequiredFieldsConfigurable(t *testing.T) {
+	f := newFixture(t, func(c *config.Config) {
+		c.RequiredFields = []string{"item"} // location/quantity optional
+	}, nil)
+	f.mock.Results = []asr.Result{
+		asr.TextResult("RJ45 connectors", "en", 0.95), // item only
+	}
+	f.s.Arm()
+	_ = f.s.BeginUtterance()
+	f.s.FeedPCM(tone(0.5), 16000, 1)
+	f.s.EndUtterance()
+	p := f.s.Pending()
+	if p == nil {
+		t.Fatal("no pending")
+	}
+	for _, r := range p.ReviewReasons {
+		if strings.Contains(r, "no quantity") || strings.Contains(r, "no location") {
+			t.Errorf("optional field flagged anyway: %v", p.ReviewReasons)
+		}
+	}
+	// defaults still flag all three
+	f2 := newFixture(t, nil, nil)
+	*f2.mock = asr.Mock{Results: []asr.Result{asr.TextResult("RJ45 connectors", "en", 0.95)}}
+	f2.s.Arm()
+	_ = f2.s.BeginUtterance()
+	f2.s.FeedPCM(tone(0.5), 16000, 1)
+	f2.s.EndUtterance()
+	p2 := f2.s.Pending()
+	joined := strings.Join(p2.ReviewReasons, "; ")
+	if !strings.Contains(joined, "no quantity") || !strings.Contains(joined, "no location") {
+		t.Errorf("defaults should flag missing quantity+location: %v", p2.ReviewReasons)
+	}
+}

@@ -12,6 +12,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -183,6 +184,21 @@ func (s *Session) State() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state
+}
+
+// SetOperator changes the operator stamped on new records (login flow, §3)
+// without disturbing capture state or the pending record.
+func (s *Session) SetOperator(operatorID string) {
+	s.mu.Lock()
+	s.cfg.OperatorID = operatorID
+	s.mu.Unlock()
+}
+
+// identity snapshots the device/operator ids for a new record.
+func (s *Session) identity() (deviceID, operatorID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.DeviceID, s.cfg.OperatorID
 }
 
 // Pending returns a deep copy of the record awaiting review, or nil.
@@ -423,9 +439,10 @@ func (s *Session) newObservation(text string, res asr.Result, pcm []float32,
 	langCode lang.Code, opts parser.Options, truncated bool) {
 
 	results := parser.ParseAll(text, opts)
+	deviceID, operatorID := s.identity()
 	for i, r := range results {
 		last := i == len(results)-1
-		obs, err := observation.New(s.cfg.DeviceID, s.cfg.OperatorID)
+		obs, err := observation.New(deviceID, operatorID)
 		if err != nil {
 			s.emitError(err.Error())
 			return
@@ -536,6 +553,12 @@ func (s *Session) redictate(text string, res asr.Result, langCode lang.Code, opt
 	pending.Confidence = s.confidence(r, res.Confidence)
 	pending.NeedsReview, pending.ReviewReasons = s.review(r, pending.Confidence)
 	if err := s.deps.Store.Update(pending); err != nil {
+		if errors.Is(err, store.ErrImmutable) || errors.Is(err, store.ErrNotFound) {
+			// the record changed out-of-band; don't wedge in review
+			s.clearPending(pending.ID)
+			s.emitError("record changed elsewhere; speak the observation again")
+			return
+		}
 		s.emitError("save failed: " + err.Error())
 		return
 	}
@@ -586,7 +609,28 @@ func (s *Session) applyCommand(cmd parser.Command, langCode lang.Code) {
 	}
 }
 
-// Confirm saves the pending record (§4.1 step 7) and re-arms.
+// clearPending drops the pending record (it changed out-of-band — batch
+// review, sync — and can no longer be acted on) and re-arms so the session
+// never wedges in review.
+func (s *Session) clearPending(id string) {
+	var ev events
+	s.mu.Lock()
+	if s.pending != nil && s.pending.ID == id {
+		s.pending = nil
+	}
+	if s.lastSavedID == id {
+		s.lastSavedID = ""
+	}
+	if s.state == StateReviewing {
+		s.setState(StateArmed, &ev)
+	}
+	s.mu.Unlock()
+	s.flush(ev)
+}
+
+// Confirm saves the pending record (§4.1 step 7) and re-arms. When the
+// record's status was changed elsewhere (batch review confirmed or
+// rejected it, sync pushed it) the session reconciles instead of wedging.
 func (s *Session) Confirm() error {
 	var ev events
 	s.mu.Lock()
@@ -596,7 +640,23 @@ func (s *Session) Confirm() error {
 		return fmt.Errorf("session: nothing to confirm")
 	}
 	if err := s.deps.Store.Confirm(pending.ID); err != nil {
-		return err
+		cur, gerr := s.deps.Store.Get(pending.ID)
+		switch {
+		case gerr == nil && (cur.Status == observation.StatusConfirmed ||
+			cur.Status == observation.StatusSynced):
+			// already saved out-of-band — the operator's intent holds
+		case gerr == nil && cur.Status == observation.StatusRejected:
+			s.clearPending(pending.ID)
+			if l := s.deps.Listener; l != nil {
+				l.OnDiscarded(pending.ID)
+			}
+			return fmt.Errorf("session: record was discarded in batch review; nothing to confirm")
+		case errors.Is(gerr, store.ErrNotFound):
+			s.clearPending(pending.ID)
+			return fmt.Errorf("session: record no longer exists")
+		default:
+			return err // transient store failure: keep pending, retry later
+		}
 	}
 	s.mu.Lock()
 	s.pending = nil
@@ -633,8 +693,22 @@ func (s *Session) Scratch() {
 		return
 	}
 	if err := s.deps.Store.Reject(target); err != nil {
-		s.emitError(err.Error())
-		return
+		cur, gerr := s.deps.Store.Get(target)
+		switch {
+		case gerr == nil && cur.Status == observation.StatusRejected:
+			// already discarded out-of-band — same outcome, proceed
+		case gerr == nil && cur.Status == observation.StatusSynced:
+			s.clearPending(target)
+			s.emitError("record already synced; it must be voided on the backend")
+			return
+		case errors.Is(gerr, store.ErrNotFound):
+			s.clearPending(target)
+			s.emitError("record no longer exists")
+			return
+		default:
+			s.emitError(err.Error())
+			return
+		}
 	}
 	s.mu.Lock()
 	if pending != nil {
@@ -670,6 +744,10 @@ func (s *Session) CorrectField(field, value string) error {
 	}
 	langCode := obsLang(work)
 	if err := s.editObservation(work, field, value); err != nil {
+		if errors.Is(err, store.ErrImmutable) || errors.Is(err, store.ErrNotFound) {
+			s.clearPending(work.ID)
+			return fmt.Errorf("session: record changed elsewhere; speak the observation again")
+		}
 		return err
 	}
 	s.mu.Lock()
@@ -790,7 +868,8 @@ func (s *Session) editObservation(pending *observation.Observation, field, value
 // AddManual records a typed observation for the mic-denied fallback (§13).
 // Typed fields carry full confidence.
 func (s *Session) AddManual(p observation.Parsed, langCode string, confirm bool) (string, error) {
-	obs, err := observation.New(s.cfg.DeviceID, s.cfg.OperatorID)
+	deviceID, operatorID := s.identity()
+	obs, err := observation.New(deviceID, operatorID)
 	if err != nil {
 		return "", err
 	}
@@ -825,7 +904,11 @@ func (s *Session) PurgeAudio() (int, error) {
 	if s.deps.AudioDir == "" {
 		return 0, nil
 	}
-	keep := time.Duration(s.cfg.Retention.KeepDays) * 24 * time.Hour
+	keepDays := s.cfg.Retention.KeepDays
+	if keepDays < 0 {
+		keepDays = 0 // defense in depth; Validate rejects negatives
+	}
+	keep := time.Duration(keepDays) * 24 * time.Hour
 	cutoff := s.deps.Clock().Add(-keep)
 	cands, err := s.deps.Store.AudioToPurge(cutoff)
 	if err != nil {
@@ -900,23 +983,34 @@ func (s *Session) confidence(r parser.Result, asrConf float64) observation.Confi
 	}
 }
 
-// review derives the NeedsReview flag and its reasons (§13).
+// requiredSet expands cfg.RequiredFields for membership checks.
+func (s *Session) requiredSet() map[string]bool {
+	m := make(map[string]bool, len(s.cfg.RequiredFields))
+	for _, f := range s.cfg.RequiredFields {
+		m[f] = true
+	}
+	return m
+}
+
+// review derives the NeedsReview flag and its reasons (§13). Which missing
+// fields count is the admin's RequiredFields choice (§14).
 func (s *Session) review(r parser.Result, conf observation.Confidence) (bool, []string) {
 	s.mu.Lock()
 	hasLocations, hasParts := s.hasLocations, s.hasParts
 	s.mu.Unlock()
+	req := s.requiredSet()
 	var reasons []string
-	if r.Parsed.ItemText == "" {
+	if r.Parsed.ItemText == "" && req["item"] {
 		reasons = append(reasons, "no item")
 	}
-	if r.Parsed.Quantity == nil {
+	if r.Parsed.Quantity == nil && req["quantity"] {
 		if r.QuantityVague {
 			reasons = append(reasons, "vague quantity")
 		} else {
 			reasons = append(reasons, "no quantity spoken")
 		}
 	}
-	if r.Parsed.LocationText == "" {
+	if r.Parsed.LocationText == "" && req["location"] {
 		reasons = append(reasons, "no location spoken")
 	}
 	reasons = append(reasons, s.confidenceReasons(conf, r.Parsed)...)
@@ -931,14 +1025,15 @@ func (s *Session) review(r parser.Result, conf observation.Confidence) (bool, []
 
 // reviewObs recomputes review reasons from a stored record (corrections).
 func (s *Session) reviewObs(o *observation.Observation) (bool, []string) {
+	req := s.requiredSet()
 	var reasons []string
-	if o.Parsed.ItemText == "" {
+	if o.Parsed.ItemText == "" && req["item"] {
 		reasons = append(reasons, "no item")
 	}
-	if o.Parsed.Quantity == nil {
+	if o.Parsed.Quantity == nil && req["quantity"] {
 		reasons = append(reasons, "no quantity spoken")
 	}
-	if o.Parsed.LocationText == "" {
+	if o.Parsed.LocationText == "" && req["location"] {
 		reasons = append(reasons, "no location spoken")
 	}
 	reasons = append(reasons, s.confidenceReasons(o.Confidence, o.Parsed)...)

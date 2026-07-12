@@ -164,3 +164,63 @@ func TestAppSyncUnconfigured(t *testing.T) {
 		t.Error("push without endpoint should fail")
 	}
 }
+
+// SetOperator must not disturb capture state, the pending record, or race
+// concurrent session access (it previously rebuilt the session).
+func TestSetOperatorPreservesCapture(t *testing.T) {
+	ev := &fakeEvents{}
+	app, err := NewApp(t.TempDir(), `{"device_id":"d1","operator_id":"op-1"}`, ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	app.Arm()
+	app.HandleTranscript("Twelve boxes of RJ45 connectors in bin A-14", "en", 0.95)
+	if app.State() != "reviewing" {
+		t.Fatalf("precondition: state = %s", app.State())
+	}
+	done := make(chan struct{})
+	go func() { // exercise concurrent reads during the operator change
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			_ = app.State()
+			_, _ = app.PendingJSON()
+		}
+	}()
+	if err := app.SetOperator("op-2"); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if app.State() != "reviewing" {
+		t.Errorf("state after SetOperator = %s, want reviewing", app.State())
+	}
+	pj, _ := app.PendingJSON()
+	if pj == "" {
+		t.Fatal("pending record lost by SetOperator")
+	}
+	if err := app.Confirm(); err != nil {
+		t.Fatal(err)
+	}
+	// records dictated after the change carry the new operator
+	app.HandleTranscript("five bags of washers in bin C-7", "en", 0.9)
+	pj, _ = app.PendingJSON()
+	if !strings.Contains(pj, `"operator_id":"op-2"`) {
+		t.Errorf("new record should carry op-2: %s", pj)
+	}
+}
+
+// Documented contract: ListJSON always returns an array.
+func TestListJSONEmptyIsArray(t *testing.T) {
+	app, err := NewApp(t.TempDir(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	out, err := app.ListJSON("", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"observations":[]`) {
+		t.Errorf("empty list = %s, want observations:[]", out)
+	}
+}

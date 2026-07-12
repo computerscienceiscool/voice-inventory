@@ -47,15 +47,16 @@ type Transcriber interface {
 	TranscribeWAV(wav []byte, lang string) (resultJSON string, err error)
 }
 
-// App is the bound application core.
+// App is the bound application core. The session (a.s) and store (a.st)
+// are created once in NewApp and never reassigned, so delegating methods
+// may read them without the mutex; a.cfg and a.sync are guarded by a.mu.
 type App struct {
-	mu       sync.Mutex
-	cfg      config.Config
-	st       *store.Store
-	s        *session.Session
-	hold     *swapTranscriber
-	sync     syncer.Syncer
-	listener session.Listener
+	mu   sync.Mutex
+	cfg  config.Config
+	st   *store.Store
+	s    *session.Session
+	hold *swapTranscriber
+	sync syncer.Syncer
 
 	dataDir string
 }
@@ -95,8 +96,7 @@ func NewApp(dataDir string, configJSON string, events Events) (*App, error) {
 		_ = st.Close()
 		return nil, err
 	}
-	return &App{cfg: cfg, st: st, s: s, hold: hold,
-		listener: deps.Listener, dataDir: dataDir}, nil
+	return &App{cfg: cfg, st: st, s: s, hold: hold, dataDir: dataDir}, nil
 }
 
 // SetTranscriber installs the native whisper.cpp bridge.
@@ -122,26 +122,13 @@ func (a *App) SaveConfig() error {
 	return a.cfg.Save(filepath.Join(a.dataDir, "config.json"))
 }
 
-// SetOperator records the logged-in operator id (§3) and rebuilds the
-// session so new records carry it.
+// SetOperator records the logged-in operator id (§3). Capture state and
+// any pending record are untouched — only new records pick up the id.
 func (a *App) SetOperator(operatorID string) error {
 	a.mu.Lock()
 	a.cfg.OperatorID = operatorID
-	cfg := a.cfg
-	listener := a.listener
 	a.mu.Unlock()
-	s, err := session.New(cfg, session.Deps{
-		Store:       a.st,
-		Transcriber: a.hold,
-		AudioDir:    filepath.Join(a.dataDir, "audio"),
-		Listener:    listener,
-	})
-	if err != nil {
-		return err
-	}
-	a.mu.Lock()
-	a.s = s
-	a.mu.Unlock()
+	a.s.SetOperator(operatorID)
 	return a.SaveConfig()
 }
 
@@ -209,6 +196,9 @@ func (a *App) ListJSON(status string, limit int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if obs == nil {
+		obs = []*observation.Observation{} // documented contract: an array
+	}
 	return marshal(map[string]any{"observations": obs})
 }
 
@@ -228,7 +218,10 @@ func (a *App) AddManual(parsedJSON string, confirm bool) (string, error) {
 	if err := json.Unmarshal([]byte(parsedJSON), &p); err != nil {
 		return "", fmt.Errorf("mobile: parsed json: %w", err)
 	}
-	return a.s.AddManual(p, a.cfg.Language, confirm)
+	a.mu.Lock()
+	langCode := a.cfg.Language
+	a.mu.Unlock()
+	return a.s.AddManual(p, langCode, confirm)
 }
 
 // --- sync ------------------------------------------------------------------

@@ -343,6 +343,9 @@ func cmdList(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *status != "" && !observation.Status(*status).Valid() {
+		return fmt.Errorf("unknown -status %q (want draft, confirmed, synced, or rejected)", *status)
+	}
 	st, err := openStore(*db)
 	if err != nil {
 		return err
@@ -436,6 +439,11 @@ func cmdSync(args []string) error {
 	mode := fs.String("mode", "all", "push|pull|all")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	switch *mode {
+	case "push", "pull", "all":
+	default:
+		return fmt.Errorf("unknown -mode %q (want push, pull, or all)", *mode)
 	}
 	st, err := openStore(*db)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // ModelSpec describes a Whisper weights file to fetch once and cache
@@ -28,11 +29,30 @@ type ModelSpec struct {
 // ModelProgress reports download progress; total is -1 when unknown.
 type ModelProgress func(fetchedBytes, totalBytes int64)
 
+// modelLocks serializes EnsureModel per cache path so concurrent callers
+// fetch once and can never clobber each other's verified install.
+var (
+	modelLocksMu sync.Mutex
+	modelLocks   = map[string]*sync.Mutex{}
+)
+
+func modelLock(path string) *sync.Mutex {
+	modelLocksMu.Lock()
+	defer modelLocksMu.Unlock()
+	if l, ok := modelLocks[path]; ok {
+		return l
+	}
+	l := &sync.Mutex{}
+	modelLocks[path] = l
+	return l
+}
+
 // EnsureModel returns the local path of the cached weights, downloading and
 // verifying them on first use. A corrupt cached file is deleted and
 // re-fetched (spec §13 "model missing/corrupt"). The download goes to a
-// temporary file and is renamed only after the checksum passes, so a killed
-// download never leaves a half-written model in place.
+// temporary file which is verified BEFORE being renamed into place, so a
+// killed or corrupt download never replaces a good model; concurrent calls
+// for the same model serialize and share one download.
 func EnsureModel(ctx context.Context, cacheDir string, spec ModelSpec, progress ModelProgress) (string, error) {
 	if spec.Name == "" {
 		return "", errors.New("asr: model spec needs a name")
@@ -41,6 +61,10 @@ func EnsureModel(ctx context.Context, cacheDir string, spec ModelSpec, progress 
 		return "", err
 	}
 	path := filepath.Join(cacheDir, spec.Name)
+
+	l := modelLock(path)
+	l.Lock()
+	defer l.Unlock()
 
 	if ok, err := verifyFile(path, spec.SHA256); err == nil && ok {
 		return path, nil
@@ -57,14 +81,18 @@ func EnsureModel(ctx context.Context, cacheDir string, spec ModelSpec, progress 
 	if spec.SHA256 == "" && !spec.AllowUnverified {
 		return "", fmt.Errorf("asr: refusing to download model %q without a sha256 (set AllowUnverified for development)", spec.Name)
 	}
-	if err := download(ctx, spec, path, progress); err != nil {
+	tmpName, err := download(ctx, spec, path, progress)
+	if err != nil {
 		return "", err
 	}
-	if ok, err := verifyFile(path, spec.SHA256); err != nil {
+	defer os.Remove(tmpName) // no-op after a successful rename
+	if ok, err := verifyFile(tmpName, spec.SHA256); err != nil {
 		return "", err
 	} else if !ok {
-		_ = os.Remove(path)
 		return "", fmt.Errorf("asr: downloaded model %q failed checksum", spec.Name)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return "", err
 	}
 	return path, nil
 }
@@ -92,28 +120,33 @@ func verifyFile(path, sha string) (bool, error) {
 	return strings.EqualFold(hex.EncodeToString(h.Sum(nil)), sha), nil
 }
 
-func download(ctx context.Context, spec ModelSpec, dest string, progress ModelProgress) error {
+// download fetches the weights into a temporary file next to dest and
+// returns its name; the caller verifies it before renaming it into place.
+func download(ctx context.Context, spec ModelSpec, dest string, progress ModelProgress) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, spec.URL, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("asr: fetch model: %w", err)
+		return "", fmt.Errorf("asr: fetch model: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("asr: fetch model: HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("asr: fetch model: HTTP %d", resp.StatusCode)
 	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(dest), ".model-*.part")
 	if err != nil {
-		return err
+		return "", err
 	}
 	tmpName := tmp.Name()
+	success := false
 	defer func() {
 		_ = tmp.Close()
-		_ = os.Remove(tmpName) // no-op after successful rename
+		if !success {
+			_ = os.Remove(tmpName)
+		}
 	}()
 
 	total := resp.ContentLength
@@ -123,7 +156,7 @@ func download(ctx context.Context, spec ModelSpec, dest string, progress ModelPr
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, werr := tmp.Write(buf[:n]); werr != nil {
-				return werr
+				return "", werr
 			}
 			fetched += int64(n)
 			if progress != nil {
@@ -134,14 +167,15 @@ func download(ctx context.Context, spec ModelSpec, dest string, progress ModelPr
 			break
 		}
 		if rerr != nil {
-			return fmt.Errorf("asr: fetch model: %w", rerr)
+			return "", fmt.Errorf("asr: fetch model: %w", rerr)
 		}
 	}
 	if err := tmp.Sync(); err != nil {
-		return err
+		return "", err
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return "", err
 	}
-	return os.Rename(tmpName, dest)
+	success = true
+	return tmpName, nil
 }

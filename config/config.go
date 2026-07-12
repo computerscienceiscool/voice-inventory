@@ -60,8 +60,9 @@ type Config struct {
 	// every field clears its threshold. Default false: §4.1 always confirms
 	// (spec ambiguity resolved conservatively — TODO item 062).
 	AutoConfirmHighConfidence bool `json:"auto_confirm_high_confidence"`
-	// RequiredFields lists fields that flag a record for review when empty.
-	// Capture is never blocked (§13); default: item.
+	// RequiredFields lists the fields that flag a record needs_review when
+	// missing. Capture is never blocked (§13). Default: item, quantity,
+	// location — matching §13's "no quantity spoken → flagged".
 	RequiredFields []string `json:"required_fields"`
 	// MultiItem enables "…and…" utterance splitting (P4, default off).
 	MultiItem bool `json:"multi_item"`
@@ -87,7 +88,7 @@ func Default() Config {
 		Thresholds: Thresholds{
 			ASR: 0.70, Quantity: 0.70, Location: 0.70, Item: 0.60,
 		},
-		RequiredFields:  []string{"item"},
+		RequiredFields:  []string{"item", "quantity", "location"},
 		TargetLatencyMS: 3000,
 		HighPassHz:      100,
 	}
@@ -113,18 +114,42 @@ func Load(path string) (Config, error) {
 }
 
 // Save writes the config as indented JSON, creating parent directories.
+// The write is atomic (temp file + rename) so a crash mid-save can't leave
+// a truncated config that blocks the next start.
 func (c Config) Save(path string) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op after a successful rename
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // Validate checks value ranges and enumerations.
@@ -139,7 +164,7 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("config: unsupported capture_mode %q", c.CaptureMode)
 	}
-	if c.Retention.Enabled && c.Retention.KeepDays < 0 {
+	if c.Retention.KeepDays < 0 {
 		return errors.New("config: retention.keep_days must be ≥ 0")
 	}
 	if c.Sync.BatchSize < 0 {

@@ -205,3 +205,42 @@ func TestEnsureModel(t *testing.T) {
 		t.Errorf("AllowUnverified should permit the fetch: %v", err)
 	}
 }
+
+// Concurrent EnsureModel calls must share one download and never remove a
+// verified install (the download is verified before the rename).
+func TestEnsureModelConcurrent(t *testing.T) {
+	payload := []byte("concurrent ggml weights")
+	sum := sha256.Sum256(payload)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	spec := ModelSpec{Name: "conc.bin", URL: srv.URL, SHA256: hex.EncodeToString(sum[:])}
+
+	const n = 6
+	errs := make(chan error, n)
+	paths := make(chan string, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			p, err := EnsureModel(context.Background(), dir, spec, nil)
+			paths <- p
+			errs <- err
+		}()
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("goroutine error: %v", err)
+		}
+		if p := <-paths; p != "" {
+			if _, err := os.Stat(p); err != nil {
+				t.Errorf("returned path missing: %v", err)
+			}
+		}
+	}
+	if hits.Load() != 1 {
+		t.Errorf("downloads = %d, want 1 (serialized)", hits.Load())
+	}
+}
