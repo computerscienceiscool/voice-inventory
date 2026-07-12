@@ -135,11 +135,23 @@ func (a *App) ConfigJSON() (string, error) {
 // and persists it. The operator id applies immediately; capture-affecting
 // fields (language, capture mode, thresholds, retention, sync endpoint)
 // apply the next time the app starts — the session is deliberately not
-// rebuilt mid-flight (see item 107). Returns an error on invalid config.
+// rebuilt mid-flight (see item 107). Returns an error on invalid config
+// without mutating the active profile.
 func (a *App) SetConfigJSON(configJSON string) error {
+	// Deep-copy the active config through a JSON round-trip before merging:
+	// a shallow struct copy would share slice/map backing arrays with
+	// a.cfg, and json.Unmarshal reuses those in place — so a rejected merge
+	// would still corrupt the live config (and race concurrent readers).
 	a.mu.Lock()
-	merged := a.cfg
+	base, err := json.Marshal(a.cfg)
 	a.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	var merged config.Config
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return err
+	}
 	if err := json.Unmarshal([]byte(configJSON), &merged); err != nil {
 		return fmt.Errorf("mobile: config json: %w", err)
 	}

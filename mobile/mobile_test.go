@@ -301,3 +301,60 @@ func TestExportCSV(t *testing.T) {
 		t.Error("bad status should error")
 	}
 }
+
+// An invalid config merge must NOT corrupt the live profile — a shallow
+// copy + in-place json.Unmarshal used to overwrite a.cfg's slice even when
+// validation rejected the result (reviewer finding #1).
+func TestSetConfigInvalidDoesNotCorrupt(t *testing.T) {
+	app, err := NewApp(t.TempDir(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+
+	before, _ := app.ConfigJSON()
+	// required_fields is a slice at len==cap==3 by default; the old bug
+	// decoded the new array into that shared backing array before the
+	// language validation failed.
+	err = app.SetConfigJSON(`{"required_fields":["unit","description"],"language":"fr"}`)
+	if err == nil {
+		t.Fatal("invalid language should be rejected")
+	}
+	after, _ := app.ConfigJSON()
+	if before != after {
+		t.Errorf("rejected config mutated the live profile:\n before %s\n after  %s", before, after)
+	}
+	if !strings.Contains(after, `"item"`) || !strings.Contains(after, `"quantity"`) ||
+		!strings.Contains(after, `"location"`) {
+		t.Errorf("required_fields corrupted: %s", after)
+	}
+	// a valid merge still works and preserves untouched nested fields
+	if err := app.SetConfigJSON(`{"operator_id":"op-x"}`); err != nil {
+		t.Fatal(err)
+	}
+	cj, _ := app.ConfigJSON()
+	if !strings.Contains(cj, `"operator_id":"op-x"`) || !strings.Contains(cj, `"batch_size":50`) {
+		t.Errorf("valid merge wrong: %s", cj)
+	}
+}
+
+// Concurrent config reads while a merge runs must be race-free (the merge
+// used to json.Unmarshal into shared state outside the lock).
+func TestConfigConcurrentAccess(t *testing.T) {
+	app, err := NewApp(t.TempDir(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			_, _ = app.ConfigJSON()
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		_ = app.SetConfigJSON(`{"operator_id":"op-y"}`)
+	}
+	<-done
+}

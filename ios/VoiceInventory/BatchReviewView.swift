@@ -1,11 +1,46 @@
 import SwiftUI
 
-private struct Rec: Identifiable {
+struct Rec: Identifiable {
     let id: String
     let summary: String
     let status: String
     let needsReview: Bool
     let syncRejected: String
+}
+
+/// One-field editor for a queued record (§4.2 batch edit), mirroring the
+/// Android RecordEditDialog.
+struct RecordEditView: View {
+    let rec: Rec
+    var onSave: (String, String) -> Void
+    var onCancel: () -> Void
+
+    @State private var field = "location"
+    @State private var value = ""
+
+    private let fields = ["location", "quantity", "item", "unit", "description"]
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Text(rec.summary).font(.caption)
+                Picker("Field", selection: $field) {
+                    ForEach(fields, id: \.self) { Text($0).tag($0) }
+                }
+                TextField("New \(field)", text: $value)
+                    .autocorrectionDisabled()
+            }
+            .navigationTitle("Edit record")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { onSave(field, value) }
+                }
+            }
+        }
+    }
 }
 
 /// Batch review (§4.2): queue with needs-review + backend-rejected badges
@@ -17,6 +52,7 @@ struct BatchReviewView: View {
     @State private var records: [Rec] = []
     @State private var shareURL: URL?
     @State private var note = ""
+    @State private var editing: Rec?
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -51,6 +87,7 @@ struct BatchReviewView: View {
                                 model.rejectRecord(rec.id)
                                 Task { await reload() }
                             }
+                            Button("Edit") { editing = rec }
                         }
                         .buttonStyle(.bordered)
                     }
@@ -60,6 +97,13 @@ struct BatchReviewView: View {
         .padding()
         .task { await reload() }
         .sheet(item: $shareURL) { url in ShareSheet(items: [url]) }
+        .sheet(item: $editing) { rec in
+            RecordEditView(rec: rec) { field, value in
+                model.editRecord(rec.id, field: field, value: value)
+                editing = nil
+                Task { await reload() }
+            } onCancel: { editing = nil }
+        }
     }
 
     private func badge(_ text: String) -> some View {

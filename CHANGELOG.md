@@ -46,6 +46,28 @@ Initial implementation of the voice-inventory Go core
   session wedging on batch-review races, model-install verification
   order, and silent CLI failure modes.
 
+### Rounds 6–8 additions (2026-07-12)
+
+- **Shells**: Android brought to P0/P1 feature-completeness (tap-to-edit
+  fields, batch-review edit, en+es help card, settings over a new config
+  facade, CSV export via share sheet); iOS SwiftUI shell to parity
+  (capture, review with edit, settings, help) reusing the same
+  desktop-verified whisper C bridge.
+- **Config facade**: `mobile.ConfigJSON`/`SetConfigJSON` (merge, validate,
+  persist) — shells can now read and edit the device profile.
+- **CSV export** (`export` package): stable, injection-safe columns via
+  `vinv export`, `mobile.ExportCSV`, and both share sheets.
+- **Void protocol**: `POST /v1/observations:void` closes the
+  in-flight-reject divergence; persistent backend-rejection badges
+  (schema v2 migration + filters + surfaces).
+- **Integration package**: the full capture→confirm→sync→export chain and
+  an offline-then-reconnect test — the end-to-end regression guard.
+- **Performance**: benchmarks for the on-device work around whisper.cpp;
+  a resolver hot-path optimization (precomputed key forms) halving
+  allocations and time, proven behavior-preserving by an independent
+  oracle test.
+- **Docs**: operations/field-trial guide, decision proposals, spec v0.2.
+
 ### Round 5 additions (2026-07-12)
 
 - Sync protocol: `POST /v1/observations:void` tombstones records discarded

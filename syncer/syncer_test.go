@@ -431,3 +431,59 @@ func TestRejectionBadgePersisted(t *testing.T) {
 		t.Errorf("badge missing: %+v", got)
 	}
 }
+
+// A divergence found in an early batch must survive to the void call even
+// across multiple batches (the accumulation the reviewer's #2/#3 concern
+// is about). Batch 1 contains a record rejected in flight; batch 2 is
+// clean; the reject must still be voided after both batches.
+func TestVoidAccumulatesAcrossBatches(t *testing.T) {
+	s := testStore(t)
+	ids := addConfirmed(t, s, 3) // batch size 2 → two batches
+	rejectInFlight := ids[0]
+
+	var voided []string
+	batchN := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/observations:batch":
+			var req PushRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			batchN++
+			if batchN == 1 {
+				_ = s.Reject(rejectInFlight) // operator scratches during batch 1
+			}
+			var resp PushResponse
+			for _, o := range req.Observations {
+				resp.Accepted = append(resp.Accepted, o.ID)
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case "/v1/observations:void":
+			var req VoidRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			voided = append(voided, req.IDs...)
+			_ = json.NewEncoder(w).Encode(VoidResponse{Voided: req.IDs})
+		}
+	}))
+	defer srv.Close()
+
+	h, _ := NewHTTP(s, Options{BaseURL: srv.URL, DeviceID: "d",
+		BatchSize: 2, AllowInsecure: true, Backoff: noBackoff})
+	report, err := h.Push(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Voided != 1 || len(voided) != 1 || voided[0] != rejectInFlight {
+		t.Errorf("diverged record from batch 1 not voided: report=%+v voided=%v", report, voided)
+	}
+	// the two clean records synced; the rejected one stayed rejected
+	if report.Pushed != 2 {
+		t.Errorf("pushed = %d, want 2", report.Pushed)
+	}
+	got, _ := s.Get(rejectInFlight)
+	if got.Status != observation.StatusRejected {
+		t.Errorf("in-flight reject status = %s, want rejected", got.Status)
+	}
+	if pv, _ := s.GetSyncState("pending_voids"); pv != "" {
+		t.Errorf("pending voids should be cleared after ack: %q", pv)
+	}
+}

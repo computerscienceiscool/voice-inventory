@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/computerscienceiscool/voice-inventory/observation"
@@ -114,10 +115,14 @@ type Options struct {
 	Backoff func(attempt int) time.Duration
 }
 
-// HTTP is the Phase-A Syncer over HTTPS.
+// HTTP is the Phase-A Syncer over HTTPS. It is safe for concurrent use:
+// Push and PullRefData are serialized, so an operator-triggered sync
+// overlapping a background one can't double-upload or corrupt the
+// pending-voids read-modify-write.
 type HTTP struct {
 	st   *store.Store
 	opts Options
+	mu   sync.Mutex
 }
 
 // ErrInsecureEndpoint rejects plaintext endpoints unless explicitly allowed.
@@ -155,6 +160,8 @@ func NewHTTP(st *store.Store, opts Options) (*HTTP, error) {
 
 // Push implements Syncer.
 func (h *HTTP) Push(ctx context.Context) (PushReport, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	var report PushReport
 	voids, err := h.loadPendingVoids()
 	if err != nil {
@@ -167,6 +174,7 @@ func (h *HTTP) Push(ctx context.Context) (PushReport, error) {
 	for {
 		batch, err := h.st.UnsyncedConfirmed(cursor, h.opts.BatchSize)
 		if err != nil {
+			h.savePendingVoids(voids)
 			return report, err
 		}
 		if len(batch) == 0 {
@@ -184,17 +192,19 @@ func (h *HTTP) Push(ctx context.Context) (PushReport, error) {
 			return report, err
 		}
 		now := time.Now()
-		synced, err := h.st.MarkSynced(resp.Accepted, now)
-		if err != nil {
+		synced, msErr := h.st.MarkSynced(resp.Accepted, now)
+		// Detect divergence from resp.Accepted BEFORE handling a MarkSynced
+		// error: on error MarkSynced rolled back (synced is empty), and a
+		// record the operator rejected in flight would otherwise never be
+		// re-detected (it's rejected, not confirmed) and stay orphaned on
+		// the backend — the exact failure the void protocol prevents.
+		voids = append(voids, h.divergedIDs(resp.Accepted, synced)...)
+		if msErr != nil {
 			h.savePendingVoids(voids)
-			return report, fmt.Errorf("syncer: mark synced: %w", err)
+			return report, fmt.Errorf("syncer: mark synced: %w", msErr)
 		}
 		report.Pushed += len(synced)
 		report.Batches++
-		// Accepted upstream but no longer confirmed here: the operator
-		// rejected the record while it was in flight. Tell the backend to
-		// tombstone it (item 112).
-		voids = append(voids, h.divergedIDs(resp.Accepted, synced)...)
 		// Persist the backend's per-record refusals for batch review (087).
 		for _, rej := range resp.Rejected {
 			if err := h.st.SetSyncRejected(rej.ID, rej.Reason, now); err != nil &&
@@ -304,6 +314,8 @@ func (h *HTTP) savePendingVoids(ids []string) {
 
 // PullRefData implements Syncer with ETag-based caching.
 func (h *HTTP) PullRefData(ctx context.Context) (PullReport, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	var report PullReport
 	etag, err := h.st.GetSyncState(etagKey)
 	if err != nil {
