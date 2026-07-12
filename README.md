@@ -36,6 +36,8 @@ which is the whole premise (§1).
 - [CLI reference](docs/cli.md) — every `vinv` command
 - [Backend sync protocol](docs/backend-protocol.md) — the contract a real backend implements
 - [Mobile integration](docs/mobile-integration.md) — gomobile bind, Events/Transcriber bridges, shell checklist
+- [Roadmap](docs/roadmap.md) — what remains: native shells, device validation, open decisions
+- [CHANGELOG.md](CHANGELOG.md) — what's in 0.1.0 and the hardening history
 - [TODO/TODO.md](TODO/TODO.md) — numbered feature/issue tracker (spec review + code review findings)
 
 ## Quick start (desktop)
