@@ -11,13 +11,13 @@ the remainder is native-shell / device / backend work outside the Go core.
 
 ## P0 — Core capture (English, push-to-talk, Android-first)
 
-- [ ] 001 - Go core scaffold packaged via gomobile bind (Android AAR + iOS xcframework) with thin native shell (§9, §17) — core + `mobile` bind facade ✔; bind surface **verified with gobind** (full Java API generates cleanly: 26 App methods + 8 Events callbacks, no skips, 2026-07-12); AAR/xcframework build + Compose shell need the mobile toolchain
+- [ ] 001 - Go core scaffold packaged via gomobile bind (Android AAR + iOS xcframework) with thin native shell (§9, §17) — core + `mobile` bind facade ✔; bind surface verified with gobind (26 App methods + 8 Events callbacks, no skips); **Compose shell scaffolded in `android/`** with the whisper.cpp JNI bridge whose C core is compile+run verified on desktop against v1.6.2 (2026-07-12); remaining: first build on a machine with the SDK/NDK, then device bring-up
 - [x] ~~002 - Audio capture pipeline: mic at native rate → downsample to 16 kHz mono PCM float32 (§8.3)~~ — `audio` pkg; shell feeds mic PCM at any rate/channels
 - [x] ~~003 - VAD utterance segmentation (energy-based MVP), silence trimming, ~30 s utterance cap (§8.3)~~ — `vad` pkg (energy + zero-crossing, pre-roll, hangover, cap)
 - [x] ~~004 - Transcriber interface + whisper.cpp cgo backend returning text + token timing/confidence (§8.1)~~ — `asr` pkg: interface, whisper.cpp CLI runner (desktop/CI), JSON parser, mock; on-device binding plugs in via `mobile.Transcriber`
 - [x] ~~005 - Model lifecycle: bundle or first-run fetch, on-device cache, missing/corrupt → re-fetch with progress, capture disabled until ready (§8.2, §13)~~ — `asr.EnsureModel` (SHA-256 verify, atomic install, progress); capture blocked until a transcriber is configured
 - [x] ~~006 - Push-to-talk capture: hold or tap-start/tap-stop; armed/idle session state machine (§4.1, §4.2)~~ — `session` Begin/EndUtterance + state machine
-- [ ] 007 - Visible mic level meter while capturing (§4.1) — core emits per-frame RMS level events ✔; meter widget is shell work
+- [ ] 007 - Visible mic level meter while capturing (§4.1) — core emits per-frame RMS level events ✔; meter scaffolded in android/ CaptureScreen (unbuilt)
 - [x] ~~008 - Deterministic slot-filler parser: tokenize, anchor keywords, span→slot assignment (§5, §7)~~ — `parser` pkg; spec §5.3 examples are golden tests
 - [x] ~~009 - Number-word normalization: "forty"→40, "a dozen"→12, "a couple"→2 low-confidence (§5.2)~~ — `lang` number engine (en+es, hundreds/thousands, dozens, digits)
 - [x] ~~010 - Unit vocabulary, extensible; unknown units stored as raw text (§5.2)~~ — built-in tables + backend units via refdata; unknown "X of" kept raw
@@ -25,11 +25,11 @@ the remainder is native-shell / device / backend work outside the Go core.
 - [x] ~~012 - Per-field confidence scores; below-threshold fields flagged for confirmation (§6.1, §7)~~ — parse certainty × ASR confidence; doubtful fields highlighted in readback
 - [x] ~~013 - Observation record per §6.1: UUIDv7 id, device/operator ids, captured_at, raw_transcript always retained, corrections log, schema_version~~ — `observation` pkg; wire-shape locked by test
 - [x] ~~014 - SQLite local store for observation queue + sync state; WAL/crash-safe so confirmed records survive force-quit (§10.1, §12)~~ — `store` pkg (WAL + synchronous FULL, durability test)
-- [ ] 015 - Readback screen: parsed fields, doubtful-field highlighting, high-contrast glanceable layout (§4.1, §4.3, §13) — core provides readback text + doubtful-field list ✔; screen is shell work
-- [ ] 016 - Confirm/correct interactions: tap ✓ to confirm, tap a field to edit or re-dictate (§4.1) — core APIs Confirm/CorrectField/EditRecord ✔; touch UI is shell work
+- [ ] 015 - Readback screen: parsed fields, doubtful-field highlighting, high-contrast glanceable layout (§4.1, §4.3, §13) — core provides readback text + doubtful-field list ✔; screen scaffolded in android/ (unbuilt)
+- [ ] 016 - Confirm/correct interactions: tap ✓ to confirm, tap a field to edit or re-dictate (§4.1) — core APIs ✔; Save/Scratch buttons scaffolded in android/ (tap-to-edit fields still to add; unbuilt)
 - [x] ~~017 - Record status lifecycle draft → confirmed on save; auto-return to armed/idle (§4.1)~~ — drafts persist at parse time (crash safety), confirm promotes, session re-arms
-- [ ] 018 - Audible + haptic confirmation on save (§4.3) — core fires OnSaved event ✔; sound/vibration is shell work
-- [ ] 019 - Glove-friendly large-button, one-handed UI (§4.3) — shell work
+- [ ] 018 - Audible + haptic confirmation on save (§4.3) — core fires OnSaved ✔; ToneGenerator + VibrationEffect cue scaffolded in android/ (unbuilt)
+- [ ] 019 - Glove-friendly large-button, one-handed UI (§4.3) — 200 dp hold-to-talk + thumb-reach layout scaffolded in android/ (unbuilt; needs floor testing)
 - [x] ~~020 - "Scratch that" / "delete" voice command discards in-progress or last-saved record (§5.2, §13)~~ — marks records rejected (auditable)
 - [x] ~~021 - Mid-utterance self-correction: last value spoken for a slot wins ("…A-40, no, A-14") (§13)~~ — negation corrections for location and quantity, en+es
 - [x] ~~022 - Manual-entry fallback when mic permission denied / no mic present (§13)~~ — session.AddManual + mobile/CLI surfaces; entry form is shell work
@@ -46,7 +46,7 @@ the remainder is native-shell / device / backend work outside the Go core.
 - [x] ~~030 - Locations reference data with spoken aliases + fuzzy resolver location_text → location_id (§6.2)~~ — exact/code-canonical/Jaro-Winkler with threshold
 - [x] ~~031 - Part vocabulary + fuzzy resolver item_text → part_number; suggestive, never blocks capture (§6.2)~~
 - [x] ~~032 - Unresolved part/location flagging for later supervisor/backend resolution (§13)~~ — review reasons when reference data exists but doesn't match
-- [ ] 033 - Batch review screen: session record list, bulk review/edit/delete, export + sync trigger (§4.2) — core list/filter/edit/confirm/reject APIs + CLI ✔; screen is shell work
+- [ ] 033 - Batch review screen: session record list, bulk review/edit/delete, export + sync trigger (§4.2) — core APIs + CLI ✔; list screen with status/review/backend-rejected badges + sync button scaffolded in android/ (edit-in-place still to add; unbuilt)
 - [x] ~~034 - Audio clip retention + purge policy (default: delete after sync + N days; configurable, can disable) (§6.3)~~ — WAV per utterance, PurgeAudio clears refs
 - [ ] 035 - On-device "how to speak to it" help card with recommended phrasing (§5) — shell work (content can come from README quick-start)
 
@@ -59,7 +59,7 @@ the remainder is native-shell / device / backend work outside the Go core.
 - [x] ~~040 - Operator login + per-device identity; stamp operator_id/device_id on records (§3)~~ — SetOperator + device profile; real authentication is item 063
 - [x] ~~041 - Admin device-profile config: model/quant/language, capture mode + wake phrase text, vocab tables, retention, sync endpoint + credentials, confidence thresholds (§14)~~ — `config` pkg; anchor-keyword tables are code-side data (unit/synonym tables are remotely extensible)
 - [ ] 042 - iOS build with Metal + CoreML-converted encoder (§8.5) — needs Xcode toolchain
-- [ ] 043 - Android acceleration: ARM NEON baseline, GPU backends where supported, clean CPU fallback (§8.5) — needs NDK; see item 066 for the corrected backend list
+- [ ] 043 - Android acceleration: ARM NEON baseline, GPU backends where supported, clean CPU fallback (§8.5) — CMake build scaffolded in android/ (NEON via arm64 default; Vulkan/OpenCL flags and device verification need the NDK)
 - [x] ~~044 - Latency instrumentation vs §8.4 targets; auto-suggest base model when target missed~~ — utterance-end → readback, rolling median, one-shot suggestion
 - [x] ~~045 - Low-end device profile: quantized base/tiny, English-only option (§8.2)~~ — config-level (model name/path + language per profile); device benchmarking is 055
 - [x] ~~046 - Optional noise suppression / high-pass filter pipeline stage (§8.3)~~ — first-order high-pass in `audio`

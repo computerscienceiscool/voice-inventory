@@ -3,3 +3,9 @@
 *.db-shm
 dist/
 *.wav
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/app/libs/*.aar
+android/app/src/main/cpp/whisper.cpp/
