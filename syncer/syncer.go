@@ -27,6 +27,10 @@ type PushReport struct {
 	Pushed   int              `json:"pushed"`
 	Batches  int              `json:"batches"`
 	Rejected []RejectedRecord `json:"rejected,omitempty"`
+	// Voided counts records the backend accepted but the device had
+	// rejected while the push was in flight; a void request told the
+	// backend to tombstone them (item 112).
+	Voided int `json:"voided,omitempty"`
 }
 
 // RejectedRecord is a record the backend refused (kept confirmed locally
@@ -71,12 +75,23 @@ type (
 		Parts     []refdata.Part     `json:"parts"`
 		Units     []refdata.Unit     `json:"units"`
 	}
+	// VoidRequest is the body of POST /v1/observations:void — records the
+	// device discarded after they were already uploaded (item 112).
+	VoidRequest struct {
+		DeviceID string   `json:"device_id"`
+		IDs      []string `json:"ids"`
+	}
+	// VoidResponse acknowledges tombstoned records.
+	VoidResponse struct {
+		Voided []string `json:"voided"`
+	}
 )
 
 const (
-	etagKey     = "refdata_etag"
-	lastPushKey = "last_push_at"
-	lastPullKey = "last_pull_at"
+	etagKey         = "refdata_etag"
+	lastPushKey     = "last_push_at"
+	lastPullKey     = "last_pull_at"
+	pendingVoidsKey = "pending_voids" // JSON id list awaiting a void ack
 
 	// maxResponseBytes bounds any single backend response (64 MB covers a
 	// very large reference-data set).
@@ -141,6 +156,10 @@ func NewHTTP(st *store.Store, opts Options) (*HTTP, error) {
 // Push implements Syncer.
 func (h *HTTP) Push(ctx context.Context) (PushReport, error) {
 	var report PushReport
+	voids, err := h.loadPendingVoids()
+	if err != nil {
+		return report, err
+	}
 	// Cursor pagination: every confirmed record is offered exactly once per
 	// pass. Backend-rejected records stay confirmed and are retried on the
 	// next pass without blocking the records queued behind them.
@@ -161,23 +180,126 @@ func (h *HTTP) Push(ctx context.Context) (PushReport, error) {
 		}
 		var resp PushResponse
 		if err := h.do(ctx, http.MethodPost, "/v1/observations:batch", req, nil, &resp, nil); err != nil {
+			h.savePendingVoids(voids)
 			return report, err
 		}
-		n, err := h.st.MarkSynced(resp.Accepted, time.Now())
+		now := time.Now()
+		synced, err := h.st.MarkSynced(resp.Accepted, now)
 		if err != nil {
+			h.savePendingVoids(voids)
 			return report, fmt.Errorf("syncer: mark synced: %w", err)
 		}
-		report.Pushed += n
+		report.Pushed += len(synced)
 		report.Batches++
+		// Accepted upstream but no longer confirmed here: the operator
+		// rejected the record while it was in flight. Tell the backend to
+		// tombstone it (item 112).
+		voids = append(voids, h.divergedIDs(resp.Accepted, synced)...)
+		// Persist the backend's per-record refusals for batch review (087).
+		for _, rej := range resp.Rejected {
+			if err := h.st.SetSyncRejected(rej.ID, rej.Reason, now); err != nil &&
+				!errors.Is(err, store.ErrNotFound) {
+				h.savePendingVoids(voids)
+				return report, fmt.Errorf("syncer: record rejection: %w", err)
+			}
+		}
 		report.Rejected = append(report.Rejected, resp.Rejected...)
 		if len(batch) < h.opts.BatchSize {
 			break
 		}
 	}
-	if report.Batches > 0 {
+	voided, verr := h.sendVoids(ctx, voids)
+	report.Voided = voided
+	if report.Batches > 0 || voided > 0 {
 		_ = h.st.SetSyncState(lastPushKey, time.Now().UTC().Format(time.RFC3339))
 	}
-	return report, nil
+	return report, verr
+}
+
+// divergedIDs returns accepted ids that did not transition to synced and
+// are now rejected locally.
+func (h *HTTP) divergedIDs(accepted, synced []string) []string {
+	if len(accepted) == len(synced) {
+		return nil
+	}
+	syncedSet := make(map[string]bool, len(synced))
+	for _, id := range synced {
+		syncedSet[id] = true
+	}
+	var out []string
+	for _, id := range accepted {
+		if syncedSet[id] {
+			continue
+		}
+		if cur, err := h.st.Get(id); err == nil &&
+			cur.Status == observation.StatusRejected {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// sendVoids tells the backend to tombstone records the device discarded
+// after upload. Unacknowledged ids persist and retry on the next push.
+func (h *HTTP) sendVoids(ctx context.Context, voids []string) (int, error) {
+	voids = dedupe(voids)
+	if len(voids) == 0 {
+		h.savePendingVoids(nil)
+		return 0, nil
+	}
+	var resp VoidResponse
+	err := h.do(ctx, http.MethodPost, "/v1/observations:void",
+		VoidRequest{DeviceID: h.opts.DeviceID, IDs: voids}, nil, &resp, nil)
+	if err != nil {
+		h.savePendingVoids(voids)
+		return 0, fmt.Errorf("syncer: void: %w", err)
+	}
+	acked := make(map[string]bool, len(resp.Voided))
+	for _, id := range resp.Voided {
+		acked[id] = true
+	}
+	var leftover []string
+	for _, id := range voids {
+		if !acked[id] {
+			leftover = append(leftover, id)
+		}
+	}
+	h.savePendingVoids(leftover)
+	return len(resp.Voided), nil
+}
+
+func dedupe(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	var out []string
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func (h *HTTP) loadPendingVoids() ([]string, error) {
+	raw, err := h.st.GetSyncState(pendingVoidsKey)
+	if err != nil || raw == "" {
+		return nil, err
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return nil, nil // unreadable state: drop rather than wedge
+	}
+	return ids, nil
+}
+
+func (h *HTTP) savePendingVoids(ids []string) {
+	if len(ids) == 0 {
+		_ = h.st.SetSyncState(pendingVoidsKey, "")
+		return
+	}
+	if raw, err := json.Marshal(ids); err == nil {
+		_ = h.st.SetSyncState(pendingVoidsKey, string(raw))
+	}
 }
 
 // PullRefData implements Syncer with ETag-based caching.

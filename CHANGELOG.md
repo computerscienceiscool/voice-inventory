@@ -46,6 +46,18 @@ Initial implementation of the voice-inventory Go core
   session wedging on batch-review races, model-install verification
   order, and silent CLI failure modes.
 
+### Round 5 additions (2026-07-12)
+
+- Sync protocol: `POST /v1/observations:void` tombstones records discarded
+  while their upload was in flight (persistent retry; mock server support).
+- Persistent backend-rejection badges on records (schema v2 migration,
+  store filter, `vinv list -sync-rejected`, `mobile.ListSyncRejectedJSON`).
+- Spec bumped to Draft v0.2: NNAPI claim corrected, wake-phrase scoping
+  aligned to P4, continuous-mode privacy trade-off documented.
+- Verified: real whisper.cpp inference through the full pipeline (0.56 s
+  wall on desktop), and the mobile facade generates complete Java bindings
+  via gobind (26 methods, 8 callbacks, no skips).
+
 ### Not in 0.1.0
 
 Native UI shells, on-device whisper.cpp builds, the wake-phrase spotter,

@@ -94,7 +94,12 @@ type Observation struct {
 	// batch-review screen and backend can filter them (extension to §6.1).
 	NeedsReview   bool     `json:"needs_review"`
 	ReviewReasons []string `json:"review_reasons,omitempty"`
-	SchemaVersion int      `json:"schema_version"`
+	// SyncRejectedReason is set when the backend refused this record on a
+	// push; it stays visible in batch review until a later push succeeds
+	// (extension to §6.1). The record remains confirmed and retryable.
+	SyncRejectedReason string     `json:"sync_rejected_reason,omitempty"`
+	SyncRejectedAt     *time.Time `json:"sync_rejected_at,omitempty"`
+	SchemaVersion      int        `json:"schema_version"`
 }
 
 // New creates a draft observation with a fresh UUIDv7 id and the capture
@@ -169,6 +174,10 @@ func (o *Observation) Clone() *Observation {
 	cp := *o
 	cp.Corrections = append([]Correction(nil), o.Corrections...)
 	cp.ReviewReasons = append([]string(nil), o.ReviewReasons...)
+	if o.SyncRejectedAt != nil {
+		at := *o.SyncRejectedAt
+		cp.SyncRejectedAt = &at
+	}
 	cp.AudioRef = cloneStr(o.AudioRef)
 	cp.Parsed.PartNumber = cloneStr(o.Parsed.PartNumber)
 	cp.Parsed.Unit = cloneStr(o.Parsed.Unit)

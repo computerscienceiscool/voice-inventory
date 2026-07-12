@@ -1,6 +1,6 @@
 # Voice Inventory Indexer — Technical Specification
 
-**Status:** Draft v0.1
+**Status:** Draft v0.2 (see Changes, §18)
 **Target platforms:** Android and iOS (phones and tablets)
 **Implementation language:** Go (core) + whisper.cpp (speech-to-text)
 **Deployment model:** Offline-first mobile app; optional sync to a PromiseGrid backend
@@ -68,7 +68,7 @@ and Admin into one role.
 ## 4. User experience / capture flow
 
 ### 4.1 Happy path (per observation)
-1. **Arm capture.** Operator taps a large push-to-talk button, or says the wake phrase (configurable, default "log item"). Push-to-talk is the default and most reliable in a noisy warehouse.
+1. **Arm capture.** Operator taps a large push-to-talk button. (A wake phrase — configurable, default "log item" — arrives with the P4 keyword spotter, §17; until then hands-busy capture is continuous-VAD mode, §4.2.) Push-to-talk is the default and most reliable in a noisy warehouse.
 2. **Speak the observation.** A voice-activity detector (VAD) determines utterance start/end; a visible level meter confirms the mic is hearing them.
 3. **Transcribe.** whisper.cpp transcribes the buffered audio on-device.
 4. **Parse.** The transcript is parsed into fields (§6). Unfilled required fields are flagged.
@@ -78,7 +78,7 @@ and Admin into one role.
 
 ### 4.2 Modes
 - **Push-to-talk (default):** hold or tap-to-start/tap-to-stop. Most robust with background noise.
-- **Continuous / hands-busy:** wake-phrase-triggered, for operators whose hands are full. Higher false-trigger risk; opt-in.
+- **Continuous / hands-busy:** for operators whose hands are full; opt-in. MVP: continuous VAD segmentation — **every** utterance in range becomes a capture attempt, so this mode is a deliberate privacy/battery trade-off until the P4 wake-phrase spotter gates it. Higher false-trigger risk.
 - **Batch review:** a list screen of the session's records for bulk review, edit, delete, and export/sync.
 
 ### 4.3 Design constraints for the UI
@@ -213,7 +213,7 @@ type Transcriber interface {
 
 ### 8.3 Audio pipeline
 1. Capture mic at device-native rate, **downsample to 16 kHz mono PCM float32** (Whisper's expected input).
-2. **VAD** segments utterances (Silero VAD via ONNX, or an energy+zero-crossing detector for the MVP). VAD trims silence so only speech is fed to Whisper, cutting latency and battery.
+2. **VAD** segments utterances. MVP: an energy + zero-crossing detector with an adaptive noise floor (no ML dependency); Silero VAD (ONNX) is a possible later upgrade at the cost of an onnxruntime native dependency. VAD trims silence so only speech is fed to Whisper, cutting latency and battery.
 3. Optional light noise suppression / high-pass filter for warehouse ambient noise.
 4. Buffer per utterance (cap length, e.g. 30 s) → `Transcribe`.
 
@@ -229,7 +229,7 @@ Latency is measured from utterance-end to readback shown. If a device can't hit 
 
 ### 8.5 Hardware acceleration
 - **iOS:** Metal + optional CoreML encoder (whisper.cpp supports a CoreML-converted encoder for a large speedup); build step produces the CoreML model alongside the ggml weights.
-- **Android:** CPU with ARM NEON as the baseline; Vulkan/OpenCL/NNAPI acceleration enabled where the device supports it. Fall back to CPU cleanly.
+- **Android:** CPU with ARM NEON as the baseline; Vulkan or OpenCL acceleration where the device supports it (ggml/whisper.cpp has **no NNAPI backend** — earlier drafts were wrong). Fall back to CPU cleanly.
 
 ---
 
@@ -366,7 +366,7 @@ it later participates directly in the grid is an open decision (§16).
 
 ## 16. Open decisions
 1. **UI:** Gio (single pure-Go codebase) vs native shells (SwiftUI/Compose) over the gomobile core. Native gives the best mic/permission/UX integration; Gio minimizes code. *Recommend starting native-thin on Android, evaluate Gio.*
-2. **Wake-phrase engine** for hands-busy mode (adds an always-listening keyword spotter, battery cost) — include in MVP or defer?
+2. ~~**Wake-phrase engine** for hands-busy mode — include in MVP or defer?~~ **Resolved: deferred to P4** (§17); MVP hands-busy mode is continuous VAD, opt-in, documented as a privacy/battery trade-off (§4.2).
 3. **Does the device join the grid directly** in a later phase, or always talk to a grid agent gateway? (§11 Phase B.)
 4. **Audio retention default window** and whether it's on by default given storage/privacy.
 5. **Part-number resolution:** ship a curated spoken-alias list, or auto-generate aliases from the part master?
@@ -379,3 +379,14 @@ it later participates directly in the grid is an open decision (§16).
 3. **P2 — Sync (HTTPS):** offline queue → backend, reference-data pull. iOS build.
 4. **P3 — Grid-native:** CBOR grid messages + capability tokens; sync target becomes a PromiseGrid agent.
 5. **P4 — Enhancements:** wake-phrase mode, multi-item utterances, optional on-device LLM parse assist.
+
+---
+
+## 18. Changes
+
+**v0.2 (2026-07-12)** — corrections from implementation review (repo TODO items 064, 066, 086):
+- §8.5: removed the NNAPI claim — ggml/whisper.cpp offers CPU/NEON, Vulkan, and OpenCL on Android, no NNAPI backend.
+- §4.1/§16.2: wake-phrase scoping aligned with §17 — deferred to P4; resolved open decision 2.
+- §4.2/§8.3: MVP hands-busy mode is continuous VAD (energy + zero-crossing, adaptive noise floor, no ONNX dependency) and is documented as an opt-in privacy/battery trade-off until the keyword spotter lands.
+
+The reference implementation of the core lives in this repository; behavioral decisions that resolved v0.1 ambiguities are catalogued in README "Spec decisions made in code" and TODO/TODO.md items 058–075.

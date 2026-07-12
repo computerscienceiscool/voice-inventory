@@ -50,9 +50,29 @@ func newMockBackend(ref syncer.RefDataResponse) *mockBackend {
 		mux:     http.NewServeMux(),
 	}
 	b.mux.HandleFunc("POST /v1/observations:batch", b.handleBatch)
+	b.mux.HandleFunc("POST /v1/observations:void", b.handleVoid)
 	b.mux.HandleFunc("GET /v1/refdata", b.handleRefData)
 	b.mux.HandleFunc("GET /v1/records", b.handleRecords)
 	return b
+}
+
+// handleVoid tombstones records the device discarded after upload
+// (docs/backend-protocol.md, TODO item 112).
+func (b *mockBackend) handleVoid(w http.ResponseWriter, r *http.Request) {
+	var req syncer.VoidRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var resp syncer.VoidResponse
+	b.mu.Lock()
+	for _, id := range req.IDs {
+		delete(b.records, id) // idempotent: unknown ids ack too
+		resp.Voided = append(resp.Voided, id)
+	}
+	b.mu.Unlock()
+	log.Printf("void from %s: %d record(s)", req.DeviceID, len(resp.Voided))
+	writeJSON(w, resp)
 }
 
 func (b *mockBackend) ServeHTTP(w http.ResponseWriter, r *http.Request) { b.mux.ServeHTTP(w, r) }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -168,12 +169,12 @@ func TestUnsyncedAndMarkSynced(t *testing.T) {
 	if unsynced[0].ID > unsynced[1].ID {
 		t.Error("unsynced should be oldest-first")
 	}
-	n, err := s.MarkSynced([]string{ids[0], ids[1], ids[2]}, time.Now())
+	synced, err := s.MarkSynced([]string{ids[0], ids[1], ids[2]}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 2 {
-		t.Errorf("marked = %d, want 2 (draft skipped)", n)
+	if len(synced) != 2 || synced[0] != ids[0] || synced[1] != ids[1] {
+		t.Errorf("synced = %v, want first two ids (draft skipped)", synced)
 	}
 	counts, err := s.CountsByStatus()
 	if err != nil {
@@ -434,5 +435,85 @@ func TestNastyStringRoundTrip(t *testing.T) {
 			t.Errorf("case %d: round trip mangled the value (len %d→%d)",
 				i, len(v), len(got.RawTranscript))
 		}
+	}
+}
+
+// The backend-rejection badge persists on confirmed records, filters in
+// List, and clears when a later push succeeds (TODO 087).
+func TestSyncRejectedBadge(t *testing.T) {
+	s := openTest(t)
+	o := newObs(t)
+	_ = s.Insert(o)
+	_ = s.Confirm(o.ID)
+	at := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
+	if err := s.SetSyncRejected(o.ID, "schema_version unsupported", at); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(o.ID)
+	if got.SyncRejectedReason != "schema_version unsupported" || got.SyncRejectedAt == nil {
+		t.Fatalf("badge not persisted: %+v", got)
+	}
+	if got.Status != observation.StatusConfirmed {
+		t.Errorf("record must stay confirmed for retry, got %s", got.Status)
+	}
+	v := true
+	flagged, err := s.List(Filter{SyncRejected: &v})
+	if err != nil || len(flagged) != 1 {
+		t.Fatalf("sync-rejected filter: %d, %v", len(flagged), err)
+	}
+	// a successful sync clears the badge
+	if _, err := s.MarkSynced([]string{o.ID}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Get(o.ID)
+	if got.SyncRejectedReason != "" || got.SyncRejectedAt != nil {
+		t.Errorf("badge should clear on sync: %+v", got)
+	}
+	// badge on a draft is refused (only confirmed records get pushed)
+	d := newObs(t)
+	_ = s.Insert(d)
+	if err := s.SetSyncRejected(d.ID, "x", at); !errors.Is(err, ErrNotFound) {
+		t.Errorf("draft badge should be ErrNotFound, got %v", err)
+	}
+}
+
+// A v1 database migrates cleanly to v2 (new columns appear, data intact).
+func TestMigrationV1ToV2(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	// Build a v1 database by hand: apply only the first migration.
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(migrations[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`PRAGMA user_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`
+		INSERT INTO observations (id, captured_at, status, created_at, updated_at)
+		VALUES ('00000000-0000-7000-8000-000000000001', '2026-07-11T00:00:00.000000000Z',
+			'confirmed', '2026-07-11T00:00:00.000000000Z', '2026-07-11T00:00:00.000000000Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path) // migrates to v2
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got, err := s.Get("00000000-0000-7000-8000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != observation.StatusConfirmed || got.SyncRejectedReason != "" {
+		t.Errorf("migrated record wrong: %+v", got)
+	}
+	if err := s.SetSyncRejected(got.ID, "post-migration", time.Now()); err != nil {
+		t.Errorf("new column unusable after migration: %v", err)
 	}
 }

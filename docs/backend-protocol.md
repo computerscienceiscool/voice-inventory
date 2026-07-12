@@ -70,6 +70,29 @@ Semantics the backend MUST honor:
   next push pass (they never block records queued behind them).
 - Status codes: 5xx and 429 are retried with backoff; other 4xx abort the
   pass and surface to the operator (bad token, bad request).
+- Per-record `rejected` reasons persist on the device as a
+  `sync_rejected_reason` badge (visible in batch review) until a later
+  push succeeds.
+
+## POST /v1/observations:void
+
+Tombstones records the device discarded *after* they were uploaded — the
+one divergence the happy path allows: an operator says "scratch that"
+while the record's batch is in flight, the backend accepts it, and the
+device keeps the reject. The device then sends:
+
+```json
+{ "device_id": "dev-42", "ids": ["019f5451-9a77-7a6b-b5f3-6f173cbbcc83"] }
+```
+
+Response: `{ "voided": ["…"] }`. Semantics:
+
+- **Idempotent**; unknown ids are acknowledged too (the record may have
+  been voided by an earlier retry).
+- The backend must exclude voided records from downstream consumption
+  (tombstone or delete — its choice).
+- Unacknowledged ids persist on the device and retry on every later push,
+  so transient failures cannot leave silent divergence.
 
 ## GET /v1/refdata
 

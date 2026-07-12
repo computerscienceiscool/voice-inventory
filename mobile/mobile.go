@@ -202,6 +202,20 @@ func (a *App) ListJSON(status string, limit int) (string, error) {
 	return marshal(map[string]any{"observations": obs})
 }
 
+// ListSyncRejectedJSON returns records the backend refused on push, for a
+// persistent batch-review badge; each carries sync_rejected_reason.
+func (a *App) ListSyncRejectedJSON(limit int) (string, error) {
+	v := true
+	obs, err := a.st.List(store.Filter{SyncRejected: &v, Limit: limit})
+	if err != nil {
+		return "", err
+	}
+	if obs == nil {
+		obs = []*observation.Observation{}
+	}
+	return marshal(map[string]any{"observations": obs})
+}
+
 // ConfirmRecord / RejectRecord act on any queued record.
 func (a *App) ConfirmRecord(id string) error { return a.st.Confirm(id) }
 func (a *App) RejectRecord(id string) error  { return a.st.Reject(id) }

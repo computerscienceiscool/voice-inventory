@@ -306,3 +306,128 @@ func TestPushRejectedDoesNotStarve(t *testing.T) {
 		t.Errorf("rejected record status = %s, want confirmed (retry later)", got.Status)
 	}
 }
+
+// A record rejected locally while its batch was in flight must be voided
+// on the backend instead of diverging silently (TODO 112), and backend
+// refusals must persist as badges (TODO 087).
+func TestVoidOnMidFlightReject(t *testing.T) {
+	s := testStore(t)
+	ids := addConfirmed(t, s, 2)
+
+	var voided []string
+	var voidCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/observations:batch":
+			var req PushRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			// Operator scratches the first record while the POST is in flight.
+			_ = s.Reject(ids[0])
+			var resp PushResponse
+			for _, o := range req.Observations {
+				resp.Accepted = append(resp.Accepted, o.ID)
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case "/v1/observations:void":
+			voidCalls.Add(1)
+			var req VoidRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			voided = append(voided, req.IDs...)
+			_ = json.NewEncoder(w).Encode(VoidResponse{Voided: req.IDs})
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	h, _ := NewHTTP(s, Options{BaseURL: srv.URL, DeviceID: "d",
+		AllowInsecure: true, Backoff: noBackoff})
+	report, err := h.Push(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Pushed != 1 || report.Voided != 1 {
+		t.Errorf("report = %+v, want 1 pushed + 1 voided", report)
+	}
+	if len(voided) != 1 || voided[0] != ids[0] {
+		t.Errorf("voided = %v, want [%s]", voided, ids[0])
+	}
+	got, _ := s.Get(ids[0])
+	if got.Status != observation.StatusRejected {
+		t.Errorf("local reject must survive: %s", got.Status)
+	}
+	if pending, _ := s.GetSyncState("pending_voids"); pending != "" {
+		t.Errorf("pending voids should be cleared: %q", pending)
+	}
+	if voidCalls.Load() != 1 {
+		t.Errorf("void calls = %d", voidCalls.Load())
+	}
+}
+
+// Void failures persist and retry on the next push.
+func TestVoidRetriesAfterFailure(t *testing.T) {
+	s := testStore(t)
+	ids := addConfirmed(t, s, 1)
+
+	var failVoid atomic.Bool
+	failVoid.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/observations:batch":
+			var req PushRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			_ = s.Reject(ids[0])
+			_ = json.NewEncoder(w).Encode(PushResponse{Accepted: []string{ids[0]}})
+		case "/v1/observations:void":
+			if failVoid.Load() {
+				http.Error(w, "down", http.StatusInternalServerError)
+				return
+			}
+			var req VoidRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			_ = json.NewEncoder(w).Encode(VoidResponse{Voided: req.IDs})
+		}
+	}))
+	defer srv.Close()
+
+	h, _ := NewHTTP(s, Options{BaseURL: srv.URL, DeviceID: "d",
+		AllowInsecure: true, MaxAttempts: 1, Backoff: noBackoff})
+	if _, err := h.Push(context.Background()); err == nil {
+		t.Fatal("void failure should surface")
+	}
+	if pending, _ := s.GetSyncState("pending_voids"); pending == "" {
+		t.Fatal("failed void must persist for retry")
+	}
+	failVoid.Store(false)
+	report, err := h.Push(context.Background()) // nothing to push; voids retry
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Voided != 1 {
+		t.Errorf("retried voids = %d, want 1", report.Voided)
+	}
+	if pending, _ := s.GetSyncState("pending_voids"); pending != "" {
+		t.Errorf("pending voids should clear after ack: %q", pending)
+	}
+}
+
+// Backend refusals persist as a badge on the record (TODO 087).
+func TestRejectionBadgePersisted(t *testing.T) {
+	s := testStore(t)
+	ids := addConfirmed(t, s, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(PushResponse{
+			Rejected: []RejectedRecord{{ID: ids[0], Reason: "duplicate"}},
+		})
+	}))
+	defer srv.Close()
+	h, _ := NewHTTP(s, Options{BaseURL: srv.URL, DeviceID: "d",
+		AllowInsecure: true, Backoff: noBackoff})
+	if _, err := h.Push(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(ids[0])
+	if got.SyncRejectedReason != "duplicate" || got.SyncRejectedAt == nil {
+		t.Errorf("badge missing: %+v", got)
+	}
+}

@@ -130,6 +130,12 @@ CREATE TABLE sync_state (
 	value TEXT NOT NULL
 );
 `,
+	// v2: persistent backend-rejection badge (TODO item 087). The record
+	// stays confirmed and retryable; the reason surfaces in batch review.
+	`
+ALTER TABLE observations ADD COLUMN sync_rejected_reason TEXT;
+ALTER TABLE observations ADD COLUMN sync_rejected_at TEXT;
+`,
 }
 
 func (s *Store) migrate() error {
@@ -331,10 +337,11 @@ func (s *Store) Get(id string) (*observation.Observation, error) {
 
 // Filter selects observations for List.
 type Filter struct {
-	Status      observation.Status // empty = all
-	NeedsReview *bool
-	Limit       int // 0 = no limit
-	Offset      int
+	Status       observation.Status // empty = all
+	NeedsReview  *bool
+	SyncRejected *bool // records the backend refused on push
+	Limit        int   // 0 = no limit
+	Offset       int
 }
 
 // List returns observations newest-first (UUIDv7 ids are time-ordered).
@@ -348,6 +355,13 @@ func (s *Store) List(f Filter) ([]*observation.Observation, error) {
 	if f.NeedsReview != nil {
 		conds = append(conds, "o.needs_review = ?")
 		args = append(args, boolInt(*f.NeedsReview))
+	}
+	if f.SyncRejected != nil {
+		if *f.SyncRejected {
+			conds = append(conds, "o.sync_rejected_reason IS NOT NULL")
+		} else {
+			conds = append(conds, "o.sync_rejected_reason IS NULL")
+		}
 	}
 	where := ""
 	if len(conds) > 0 {
@@ -378,36 +392,56 @@ func (s *Store) UnsyncedConfirmed(afterID string, limit int) ([]*observation.Obs
 }
 
 // MarkSynced transitions the given confirmed records to synced in one
-// transaction and returns how many actually changed.
-func (s *Store) MarkSynced(ids []string, at time.Time) (int, error) {
+// transaction and returns the ids that actually changed. Ids that were no
+// longer confirmed (rejected locally while the push was in flight) are
+// omitted so the syncer can reconcile them with the backend (item 112).
+func (s *Store) MarkSynced(ids []string, at time.Time) ([]string, error) {
 	if len(ids) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	stamp := fmtTime(at)
 	now := fmtTime(time.Now())
-	total := 0
+	var synced []string
 	for _, id := range ids {
 		res, err := tx.Exec(`
-			UPDATE observations SET status = 'synced', synced_at = ?, updated_at = ?
+			UPDATE observations SET status = 'synced', synced_at = ?, updated_at = ?,
+				sync_rejected_reason = NULL, sync_rejected_at = NULL
 			WHERE id = ? AND status = 'confirmed'`, stamp, now, id)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return 0, err
+		if n, err := res.RowsAffected(); err != nil {
+			return nil, err
+		} else if n > 0 {
+			synced = append(synced, id)
 		}
-		total += int(n)
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return total, nil
+	return synced, nil
+}
+
+// SetSyncRejected records that the backend refused this record on a push
+// (TODO item 087). The record stays confirmed so later pushes retry it;
+// the badge clears automatically when a push succeeds.
+func (s *Store) SetSyncRejected(id, reason string, at time.Time) error {
+	res, err := s.db.Exec(`
+		UPDATE observations SET sync_rejected_reason = ?, sync_rejected_at = ?, updated_at = ?
+		WHERE id = ? AND status = 'confirmed'`,
+		reason, fmtTime(at), fmtTime(time.Now()), id)
+	if err != nil {
+		return fmt.Errorf("store set sync rejected: %w", err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // LastActive returns the most recent draft or confirmed record's id —
@@ -485,7 +519,8 @@ func (s *Store) query(where, tail string, args ...any) ([]*observation.Observati
 			o.raw_transcript, o.audio_ref, o.item_text, o.part_number,
 			o.quantity, o.unit, o.location_text, o.location_id, o.description,
 			o.conf_asr, o.conf_quantity, o.conf_location, o.conf_item,
-			o.status, o.needs_review, o.review_reasons, o.schema_version
+			o.status, o.needs_review, o.review_reasons,
+			o.sync_rejected_reason, o.sync_rejected_at, o.schema_version
 		FROM observations o ` + where + " " + tail
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -497,6 +532,7 @@ func (s *Store) query(where, tail string, args ...any) ([]*observation.Observati
 		o := &observation.Observation{}
 		var capturedAt, reasons, status string
 		var audioRef, partNumber, unit, locationID, description sql.NullString
+		var syncRejReason, syncRejAt sql.NullString
 		var quantity sql.NullFloat64
 		var needsReview int
 		if err := rows.Scan(&o.ID, &o.DeviceID, &o.OperatorID, &capturedAt,
@@ -505,8 +541,18 @@ func (s *Store) query(where, tail string, args ...any) ([]*observation.Observati
 			&locationID, &description, &o.Confidence.ASR,
 			&o.Confidence.Quantity, &o.Confidence.Location,
 			&o.Confidence.Item, &status, &needsReview, &reasons,
-			&o.SchemaVersion); err != nil {
+			&syncRejReason, &syncRejAt, &o.SchemaVersion); err != nil {
 			return nil, err
+		}
+		if syncRejReason.Valid {
+			o.SyncRejectedReason = syncRejReason.String
+		}
+		if syncRejAt.Valid {
+			at, err := parseTime(syncRejAt.String)
+			if err != nil {
+				return nil, fmt.Errorf("bad sync_rejected_at for %s: %w", o.ID, err)
+			}
+			o.SyncRejectedAt = &at
 		}
 		t, err := parseTime(capturedAt)
 		if err != nil {

@@ -86,6 +86,7 @@ other utterance is treated as a full re-dictation of the pending record.
 
 ```kotlin
 app.listJSON("draft", 50)        // {"observations":[…]}, newest first
+app.listSyncRejectedJSON(50)     // records the backend refused — badge these
 app.editRecord(id, "quantity", "15")
 app.confirmRecord(id); app.rejectRecord(id)
 app.addManual(parsedJSON, true)  // mic-permission-denied fallback (§13)
@@ -94,6 +95,17 @@ app.syncPush(); app.syncPull()   // returns report JSON; call opportunistically
 app.purgeAudio()                 // retention policy (§6.3), e.g. daily
 app.statsJSON()                  // latency + queue counts
 ```
+
+Records carry `sync_rejected_reason`/`sync_rejected_at` after the backend
+refuses them on a push; the badge clears automatically when a later push
+succeeds. Rejecting a record whose upload is already in flight is safe:
+the core voids it on the backend automatically (see
+[backend-protocol.md](backend-protocol.md)).
+
+**Privacy note — continuous mode.** Until the wake-phrase spotter ships,
+`capture_mode: "wake"` means the VAD treats *every* utterance in mic range
+as a capture attempt. Keep it opt-in per §4.2, show a persistent
+"listening" indicator, and prefer push-to-talk on shared floors.
 
 `syncPull` hot-reloads the location/part resolvers; no restart needed.
 

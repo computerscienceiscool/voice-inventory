@@ -340,6 +340,7 @@ func cmdList(args []string) error {
 	status := fs.String("status", "", "filter by status")
 	limit := fs.Int("limit", 0, "max records")
 	needsReview := fs.Bool("needs-review", false, "only flagged records")
+	syncRejected := fs.Bool("sync-rejected", false, "only records the backend refused")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -355,6 +356,10 @@ func cmdList(args []string) error {
 	if *needsReview {
 		v := true
 		f.NeedsReview = &v
+	}
+	if *syncRejected {
+		v := true
+		f.SyncRejected = &v
 	}
 	obs, err := st.List(f)
 	if err != nil {

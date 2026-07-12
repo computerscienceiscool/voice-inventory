@@ -11,7 +11,7 @@ the remainder is native-shell / device / backend work outside the Go core.
 
 ## P0 — Core capture (English, push-to-talk, Android-first)
 
-- [ ] 001 - Go core scaffold packaged via gomobile bind (Android AAR + iOS xcframework) with thin native shell (§9, §17) — core + `mobile` bind facade ✔; AAR/xcframework build + Compose shell need the mobile toolchain
+- [ ] 001 - Go core scaffold packaged via gomobile bind (Android AAR + iOS xcframework) with thin native shell (§9, §17) — core + `mobile` bind facade ✔; bind surface **verified with gobind** (full Java API generates cleanly: 26 App methods + 8 Events callbacks, no skips, 2026-07-12); AAR/xcframework build + Compose shell need the mobile toolchain
 - [x] ~~002 - Audio capture pipeline: mic at native rate → downsample to 16 kHz mono PCM float32 (§8.3)~~ — `audio` pkg; shell feeds mic PCM at any rate/channels
 - [x] ~~003 - VAD utterance segmentation (energy-based MVP), silence trimming, ~30 s utterance cap (§8.3)~~ — `vad` pkg (energy + zero-crossing, pre-roll, hangover, cap)
 - [x] ~~004 - Transcriber interface + whisper.cpp cgo backend returning text + token timing/confidence (§8.1)~~ — `asr` pkg: interface, whisper.cpp CLI runner (desktop/CI), JSON parser, mock; on-device binding plugs in via `mobile.Transcriber`
@@ -79,7 +79,7 @@ the remainder is native-shell / device / backend work outside the Go core.
 ## Testing / acceptance
 
 - [x] ~~053 - Unit suites: table-driven parser per language, number normalization, fuzzy resolvers, DB layer (§15)~~ — 15 packages, race-clean
-- [ ] 054 - Golden-audio CI suite: recorded en+es utterances, quiet + noisy, expected parsed output (§15) — transcript-level goldens run in CI ✔; audio harness ready (`asr.TestGoldenAudio`, env-gated) — needs real recordings
+- [ ] 054 - Golden-audio CI suite: recorded en+es utterances, quiet + noisy, expected parsed output (§15) — transcript-level goldens run in CI ✔; audio harness ready (`asr.TestGoldenAudio`, env-gated); **full pipeline validated with real whisper.cpp inference** (v1.6.2 + tiny.en-q5_1, `vinv capture` on real speech, 0.56 s wall — 2026-07-12); still needs warehouse recordings (no TTS/mic on the dev box)
 - [ ] 055 - Device-matrix verification: low/mid/flagship per OS, latency + thermal (§15) — needs devices
 - [ ] 056 - Battery test: 8-hour intermittent-capture shift on a typical phone (§12) — needs devices
 - [ ] 057 - Field trial: ≥50 consecutive voice captures while walking, ≥95% qty+location accuracy, offline + force-quit resilience, time-per-item vs paper (§15)
@@ -92,9 +92,9 @@ the remainder is native-shell / device / backend work outside the Go core.
 - [x] ~~061 - Required fields never enumerated~~ — decided: capture never blocks; missing item/quantity/location set needs_review with reasons; required_fields config exists
 - [x] ~~062 - Clarify auto-confirm~~ — decided: always confirm by default (§4.1); `auto_confirm_high_confidence` opt-in saves when every field clears its threshold
 - [ ] 063 - MVP auth undefined: specify Phase A operator login, device enrollment, and operator_id provenance — operator id is set via SetOperator; no authentication yet
-- [ ] 064 - Wake-phrase scope conflict (§4.1 vs §16.2 vs §17 P4) — align the spec; code treats it as P4 (item 050)
+- [x] ~~064 - Wake-phrase scope conflict (§4.1 vs §16.2 vs §17 P4) — align the spec~~ — fixed in spec v0.2: deferred to P4, §16.2 marked resolved, §4.1/§4.2 updated
 - [ ] 065 - Verify modernc.org/sqlite under gomobile on iOS + Android — works on desktop/CI (WAL, durability tested); mobile verification needs the toolchain; note cgo-free rationale is moot since whisper.cpp forces cgo
-- [ ] 066 - Correct Android acceleration claims in spec: ggml/whisper.cpp has Vulkan/OpenCL but no NNAPI backend (§8.5); MVP VAD is energy-based, so no onnxruntime dependency
+- [x] ~~066 - Correct Android acceleration claims in spec: ggml/whisper.cpp has Vulkan/OpenCL but no NNAPI backend (§8.5); MVP VAD is energy-based, so no onnxruntime dependency~~ — fixed in spec v0.2 (§8.3, §8.5, §18 change log)
 - [x] ~~067 - Post-sync edits undefined~~ — decided: synced records are immutable on-device (backend owns them); only audio_ref clearing is allowed after purge
 - [ ] 068 - Accuracy metric ambiguous: define how "≥95% after confirmation" is measured for §15 acceptance
 - [x] ~~069 - Specify behavior at the ~30 s utterance cap~~ — decided: transcribe what was captured, flag the record "utterance hit the 30-second cap"; PTT buffer hard-caps at 30 s
@@ -117,8 +117,8 @@ the remainder is native-shell / device / backend work outside the Go core.
 - [x] ~~083 - Usability: `vinv list` printed `null` for an empty queue~~ — fixed: prints `[]`
 - [ ] 084 - Security decision: at-rest encryption for the SQLite queue and audio clips — rely on OS full-device encryption (baseline) or add SQLCipher/encrypted-FS; transcripts and audio are business data (§12)
 - [ ] 085 - Security: grid signing keys (item 048) need platform-secure storage in the shell (Android Keystore / iOS Secure Enclave); PEM helpers exist for dev only
-- [ ] 086 - Privacy/usability: "wake" capture mode is currently continuous VAD with NO keyword gate — every utterance in range becomes a record attempt; keep opt-in + document until the keyword spotter (item 050) lands
-- [ ] 087 - Usability: backend-rejected records only surface in the one-shot push report — batch review should badge them persistently so a supervisor notices (relates to 060/073)
+- [x] ~~086 - Privacy/usability: "wake" capture mode is currently continuous VAD with NO keyword gate — keep opt-in + document until the keyword spotter (item 050) lands~~ — documented: spec v0.2 §4.2 names the trade-off explicitly; mobile-integration guide tells shells to show a persistent listening indicator and prefer PTT on shared floors
+- [x] ~~087 - Usability: backend-rejected records only surfaced in the one-shot push report~~ — implemented: `sync_rejected_reason`/`sync_rejected_at` persist on the record (schema v2 migration), clear automatically on a successful push, filter in store.List / `vinv list -sync-rejected` / `mobile.ListSyncRejectedJSON`; the badge chip itself is shell work under 033
 - [x] ~~088 - Correctness (reviewer-confirmed): "3 hundred" parsed as two numbers (3, 100) instead of 300 — the digit branch blocked the hundred scale~~ — fixed + regression test
 - [x] ~~089 - Correctness (reviewer-confirmed): "a couple hundred screws" parsed as quantity 100 at full confidence with "a couple" dumped into the description~~ — fixed: vague values now seed scale words (2×100 = 200, approximate)
 - [x] ~~090 - Correctness (reviewer-confirmed): Whisper's spaced-dash rendering "bin A - 14" split the code at a false clause break → location "A", quantity 14~~ — fixed: bare ASCII dashes are dropped, not clause breaks
@@ -150,4 +150,8 @@ the remainder is native-shell / device / backend work outside the Go core.
 - [x] ~~109 - Correctness (reviewer-2 confirmed): EnsureModel renamed the download into place BEFORE verifying it — a slower corrupt download could replace and then delete a concurrently-verified good model, and killed processes could leave unverified weights installed~~ — fixed: verify the temp file first, rename only after the checksum passes, and serialize concurrent fetches per model (one HTTP download for N callers); concurrency regression test
 - [x] ~~110 - Usability (reviewer-2 confirmed): `vinv sync -mode pushh` and `vinv list -status Draft` silently did nothing with exit 0 — a typo looked like a successful sync/empty queue~~ — fixed: unknown enum values error loudly; tests
 - [x] ~~111 - Robustness (reviewer-2 suspicion, confirmed half): config.Save wrote in place, so a crash mid-save could leave a truncated config.json that blocks the next app start; PurgeAudio would honor a negative keep_days as a future cutoff~~ — fixed: atomic temp+rename save; keep_days ≥ 0 always enforced + clamped in PurgeAudio
-- [ ] 112 - Design gap (reviewer-2 suspicion, real but needs backend semantics): a record rejected locally after the push snapshot but before the POST is still uploaded — the local reject survives, but the backend keeps the record and nobody is told about the divergence; needs a void/tombstone in the sync protocol (relates 060, 073, 087)
+- [x] ~~112 - Design gap (reviewer-2 suspicion): a record rejected locally while its batch was in flight was still uploaded and the divergence was silent~~ — implemented: `POST /v1/observations:void` protocol extension (docs/backend-protocol.md); MarkSynced reports which ids transitioned, the syncer detects accepted-but-locally-rejected records, voids them idempotently, and persists unacknowledged voids for retry; mock server implements it; tests cover mid-flight reject + void-retry-after-failure
+
+## Round 5 (2026-07-12, working through open items)
+
+- [x] ~~113 - Real-ASR validation: built whisper.cpp v1.6.2 + tiny.en-q5_1 on the dev box and ran genuine speech through the complete pipeline (`vinv capture`: WAV → VAD trim → ExecTranscriber subprocess → JSON → parse → store) — transcription correct, 0.56 s wall~~ — proves the §8.1 seam against real inference; commands recorded in docs/cli.md and asr/golden_audio_test.go
