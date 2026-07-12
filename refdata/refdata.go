@@ -38,9 +38,18 @@ const (
 	DefaultPartThreshold     = 0.85
 )
 
+// key is one reference name/alias with its comparison forms precomputed
+// once at index-build time — resolution runs on every utterance all day
+// (§12), so re-folding per query would be wasted battery.
+type key struct {
+	fold  string // lower-cased, accent-stripped
+	canon string // fold with spaces/dashes removed ("a14")
+	deplu string // fold with simple plurals stripped
+}
+
 type entry struct {
 	id   string
-	keys []string // folded name/aliases
+	keys []key
 }
 
 // Index resolves spoken location and item text against reference data.
@@ -69,26 +78,32 @@ func NewIndex(locs []Location, parts []Part) *Index {
 	return x
 }
 
-func foldKeys(raw []string) []string {
-	var keys []string
+func foldKeys(raw []string) []key {
+	var keys []key
 	seen := map[string]bool{}
 	for _, r := range raw {
-		k := lang.Fold(strings.TrimSpace(r))
-		if k == "" || seen[k] {
+		f := lang.Fold(strings.TrimSpace(r))
+		if f == "" || seen[f] {
 			continue
 		}
-		seen[k] = true
-		keys = append(keys, k)
+		seen[f] = true
+		keys = append(keys, key{fold: f, canon: canon(f), deplu: depluralize(f)})
 	}
 	return keys
 }
 
 // CanonCode collapses a location code for comparison: folded, with spaces
 // and dashes removed, so "A-14" == "a 14" == "a14".
-func CanonCode(s string) string {
-	s = lang.Fold(s)
+func CanonCode(s string) string { return canon(lang.Fold(s)) }
+
+// canon removes separators from an already-folded string.
+func canon(folded string) string {
+	if !strings.ContainsAny(folded, " -./") {
+		return folded
+	}
 	var b strings.Builder
-	for _, r := range s {
+	b.Grow(len(folded))
+	for _, r := range folded {
 		if r == ' ' || r == '-' || r == '.' || r == '/' {
 			continue
 		}
@@ -111,26 +126,35 @@ func depluralize(s string) string {
 	return strings.Join(tokens, " ")
 }
 
-func bestScore(text string, e entry, code bool) float64 {
-	folded := lang.Fold(strings.TrimSpace(text))
-	if folded == "" {
-		return 0
+// query holds the caller's spoken text in the same precomputed forms as a
+// key, so bestScore does zero string allocation per reference entry.
+type query struct {
+	fold, canon, deplu string
+}
+
+func newQuery(text string) (query, bool) {
+	f := lang.Fold(strings.TrimSpace(text))
+	if f == "" {
+		return query{}, false
 	}
-	canon := CanonCode(folded)
-	deplu := depluralize(folded)
+	return query{fold: f, canon: canon(f), deplu: depluralize(f)}, true
+}
+
+func bestScore(q query, e entry, code bool) float64 {
 	best := 0.0
-	for _, k := range e.keys {
-		if k == folded {
+	for i := range e.keys {
+		k := &e.keys[i]
+		if k.fold == q.fold {
 			return 1
 		}
-		if code && canon != "" && CanonCode(k) == canon {
+		if code && q.canon != "" && k.canon == q.canon {
 			if 0.98 > best {
 				best = 0.98
 			}
 			continue
 		}
-		s := fuzzy.JaroWinkler(folded, k)
-		if d := fuzzy.JaroWinkler(deplu, depluralize(k)); d > s {
+		s := fuzzy.JaroWinkler(q.fold, k.fold)
+		if d := fuzzy.JaroWinkler(q.deplu, k.deplu); d > s {
 			s = d
 		}
 		if s > best {
@@ -152,9 +176,13 @@ func (x *Index) ResolveLocation(text string) (id string, score float64, ok bool)
 	if x == nil {
 		return "", 0, false
 	}
-	for _, e := range x.locations {
-		if s := bestScore(text, e, true); s > score {
-			score, id = s, e.id
+	q, ok := newQuery(text)
+	if !ok {
+		return "", 0, false
+	}
+	for i := range x.locations {
+		if s := bestScore(q, x.locations[i], true); s > score {
+			score, id = s, x.locations[i].id
 		}
 	}
 	if score < x.LocationThreshold {
@@ -168,9 +196,13 @@ func (x *Index) ResolvePart(text string) (partNumber string, score float64, ok b
 	if x == nil {
 		return "", 0, false
 	}
-	for _, e := range x.parts {
-		if s := bestScore(text, e, false); s > score {
-			score, partNumber = s, e.id
+	q, ok := newQuery(text)
+	if !ok {
+		return "", 0, false
+	}
+	for i := range x.parts {
+		if s := bestScore(q, x.parts[i], false); s > score {
+			score, partNumber = s, x.parts[i].id
 		}
 	}
 	if score < x.PartThreshold {
