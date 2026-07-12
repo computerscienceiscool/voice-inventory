@@ -225,6 +225,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }.onFailure { errors.value = it.message }
     }
 
+    /** Export the queue to a CSV file and hand it to the share sheet (072). */
+    fun exportCsv(onReady: (File) -> Unit) = offMain {
+        runCatching {
+            val csv = app.exportCSV("")
+            val file = File(getApplication<Application>().cacheDir, "inventory-export.csv")
+            file.writeText(csv)
+            file
+        }.onSuccess(onReady).onFailure { errors.value = it.message }
+    }
+
     // --- platform feedback ---------------------------------------------------
 
     private fun speak(text: String) {

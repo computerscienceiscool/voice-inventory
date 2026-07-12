@@ -277,3 +277,27 @@ func TestConfigRoundTrip(t *testing.T) {
 		t.Errorf("rejected config must not stick: %s", cj)
 	}
 }
+
+func TestExportCSV(t *testing.T) {
+	app, err := NewApp(t.TempDir(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	if _, err := app.AddManual(`{"item_text":"hex nuts","quantity":7,"location_text":"B-2"}`, true); err != nil {
+		t.Fatal(err)
+	}
+	csv, err := app.ExportCSV("confirmed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(csv, "id,captured_at") {
+		t.Errorf("missing header: %q", csv)
+	}
+	if !strings.Contains(csv, "hex nuts") || !strings.Contains(csv, "B-2") {
+		t.Errorf("record not exported: %q", csv)
+	}
+	if _, err := app.ExportCSV("bogus"); err == nil {
+		t.Error("bad status should error")
+	}
+}

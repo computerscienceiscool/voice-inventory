@@ -9,8 +9,8 @@ items all fall into four buckets. Numbers reference the todo.
 The Go side of each item is finished and documented in
 [mobile-integration.md](mobile-integration.md), and shell scaffolds now
 exist for both platforms — `android/` (capture, review with edit,
-settings, help; JNI bridge desktop-verified) and `ios/` (capture; same
-verified C bridge) — both unbuilt. What's left is the first SDK/Xcode
+settings, help; JNI bridge desktop-verified) and `ios/` (capture, review,
+settings, help; same verified C bridge) — both unbuilt. What's left is the first SDK/Xcode
 build and device bring-up.
 
 | Item | Work | Notes |
@@ -41,7 +41,7 @@ Each has a concrete recommendation waiting in [proposals.md](proposals.md).
 |------|----------|
 | 060 | Does audio upload for low-confidence records, or is re-verification device-only? Clips currently never leave the device |
 | 063 | Phase-A operator authentication + device enrollment (operator id is currently just set, not authenticated) |
-| 068, 072, 073 | Spec edits: define how the 95% metric is measured, batch-review export format, where the supervisor UI lives (064/066 landed in spec v0.2) |
+| 068, 073 | Spec edits: define how the 95% metric is measured, where the supervisor UI lives (064/066 landed in spec v0.2; 072 CSV export shipped) |
 | 070 | TTS engine (interacts with 075) |
 | 075 | §16 set: Gio vs native shells (blocks 001), device-joins-grid vs gateway, retention default (code ships on/7 days), part-alias curation |
 | 084 | At-rest encryption: rely on OS device encryption, or add SQLCipher |

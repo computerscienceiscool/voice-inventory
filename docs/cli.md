@@ -30,7 +30,11 @@ vinv confirm -db inv.db <id> [<id>…]
 vinv reject  -db inv.db <id> [<id>…]          # "scratch" — auditable, not a delete
 vinv edit    -db inv.db -id <id> -field location -value "A-40"
 vinv stats   -db inv.db                        # counts by status
+vinv export  -db inv.db [-status confirmed] [-o out.csv]   # CSV (stdout default)
 ```
+
+`export` writes RFC 4180 CSV with a stable column header (item 072); every
+field is quoted, so transcripts with commas/quotes/newlines are safe.
 
 `edit` fields: `location` (re-resolved), `quantity` (number words OK),
 `item` (re-matched against parts), `unit`, `description`.

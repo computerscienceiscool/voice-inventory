@@ -90,10 +90,12 @@ app.listSyncRejectedJSON(50)     // records the backend refused — badge these
 app.editRecord(id, "quantity", "15")
 app.confirmRecord(id); app.rejectRecord(id)
 app.addManual(parsedJSON, true)  // mic-permission-denied fallback (§13)
+app.exportCSV("")                // CSV string → temp file → share sheet (072)
 
 app.syncPush(); app.syncPull()   // returns report JSON; call opportunistically
 app.purgeAudio()                 // retention policy (§6.3), e.g. daily
 app.statsJSON()                  // latency + queue counts
+app.configJSON(); app.setConfigJSON(json)  // read/merge device profile (§14)
 ```
 
 Records carry `sync_rejected_reason`/`sync_rejected_at` after the backend

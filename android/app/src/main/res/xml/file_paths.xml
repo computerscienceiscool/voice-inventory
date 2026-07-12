@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- CSV exports written to cacheDir (AppViewModel.exportCsv). -->
+    <cache-path name="exports" path="." />
+</paths>

@@ -17,11 +17,13 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/computerscienceiscool/voice-inventory/asr"
 	"github.com/computerscienceiscool/voice-inventory/audio"
 	"github.com/computerscienceiscool/voice-inventory/config"
+	"github.com/computerscienceiscool/voice-inventory/export"
 	"github.com/computerscienceiscool/voice-inventory/observation"
 	"github.com/computerscienceiscool/voice-inventory/session"
 	"github.com/computerscienceiscool/voice-inventory/store"
@@ -244,6 +246,29 @@ func (a *App) ListSyncRejectedJSON(limit int) (string, error) {
 		obs = []*observation.Observation{}
 	}
 	return marshal(map[string]any{"observations": obs})
+}
+
+// ExportCSV returns the queue as CSV for the platform share sheet
+// (docs/proposals.md item 072); status filters when non-empty. The shell
+// writes the string to a temp file and hands it to the share intent.
+func (a *App) ExportCSV(status string) (string, error) {
+	f := store.Filter{}
+	if status != "" {
+		st := observation.Status(status)
+		if !st.Valid() {
+			return "", fmt.Errorf("mobile: unknown status %q", status)
+		}
+		f.Status = st
+	}
+	obs, err := a.st.List(f)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	if err := export.CSV(&b, obs); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }
 
 // ConfirmRecord / RejectRecord act on any queued record.

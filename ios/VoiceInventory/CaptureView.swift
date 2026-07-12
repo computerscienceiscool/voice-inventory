@@ -5,6 +5,9 @@ import SwiftUI
 /// CaptureScreen.
 struct CaptureView: View {
     @ObservedObject var model: AppModel
+    var onOpenReview: () -> Void
+    var onOpenSettings: () -> Void
+    var onOpenHelp: () -> Void
 
     var body: some View {
         VStack(spacing: 16) {
@@ -12,6 +15,9 @@ struct CaptureView: View {
                 Text(banner)
                     .font(.title2.weight(.black))
                 Spacer()
+                Button("?", action: onOpenHelp)
+                Button("⚙", action: onOpenSettings)
+                Button("Review", action: onOpenReview)
             }
 
             ProgressView(value: min(1.0, Double(model.level) * 6)) // level meter (§4.1)

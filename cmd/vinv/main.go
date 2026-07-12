@@ -25,12 +25,14 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/computerscienceiscool/voice-inventory/asr"
 	"github.com/computerscienceiscool/voice-inventory/audio"
 	"github.com/computerscienceiscool/voice-inventory/config"
+	"github.com/computerscienceiscool/voice-inventory/export"
 	"github.com/computerscienceiscool/voice-inventory/lang"
 	"github.com/computerscienceiscool/voice-inventory/observation"
 	"github.com/computerscienceiscool/voice-inventory/parser"
@@ -78,6 +80,8 @@ func run(args []string) error {
 		return cmdPurgeAudio(rest)
 	case "stats":
 		return cmdStats(rest)
+	case "export":
+		return cmdExport(rest)
 	case "mockserver":
 		return cmdMockServer(rest)
 	default:
@@ -576,6 +580,44 @@ func cmdPurgeAudio(args []string) error {
 		return err
 	}
 	fmt.Printf("purged %d clip(s)\n", n)
+	return nil
+}
+
+func cmdExport(args []string) error {
+	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	db := fs.String("db", "", "store path")
+	status := fs.String("status", "", "filter by status")
+	out := fs.String("o", "", "output CSV file (default stdout)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *status != "" && !observation.Status(*status).Valid() {
+		return fmt.Errorf("unknown -status %q", *status)
+	}
+	st, err := openStore(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	obs, err := st.List(store.Filter{Status: observation.Status(*status)})
+	if err != nil {
+		return err
+	}
+	w := io.Writer(os.Stdout)
+	if *out != "" {
+		f, err := os.Create(*out)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		w = f
+	}
+	if err := export.CSV(w, obs); err != nil {
+		return err
+	}
+	if *out != "" {
+		fmt.Printf("exported %d record(s) to %s\n", len(obs), *out)
+	}
 	return nil
 }
 

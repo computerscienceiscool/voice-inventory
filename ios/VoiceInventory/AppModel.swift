@@ -114,6 +114,37 @@ final class AppModel: NSObject, ObservableObject {
         off { try? $0.correctField(field, value: value) }
     }
 
+    // --- batch review, sync, export, settings (§4.2, §14) -------------------
+
+    func listRecords(status: String) async -> String {
+        (try? app.listJSON(status, limit: 200)) ?? #"{"observations":[]}"#
+    }
+
+    func confirmRecord(_ id: String) { off { try? $0.confirmRecord(id) } }
+    func rejectRecord(_ id: String) { off { try? $0.rejectRecord(id) } }
+    func editRecord(_ id: String, field: String, value: String) {
+        off { try? $0.editRecord(id, field: field, value: value) }
+    }
+
+    func sync() async -> String {
+        let app = self.app!
+        return await Task.detached {
+            (try? app.syncPush()).map { "push \($0)" } ?? "sync failed"
+        }.value
+    }
+
+    /// CSV to a temp file for the iOS share sheet (item 072).
+    func exportCSV() async -> URL? {
+        guard let csv = try? app.exportCSV("") else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("inventory-export.csv")
+        try? csv.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    func configJSON() -> String { (try? app.configJSON()) ?? "{}" }
+    func saveConfig(_ json: String) throws { try app.setConfigJSON(json) }
+
     // --- events (called from core threads via EventsBridge) ------------------
 
     func handle(state s: String) { state = s }

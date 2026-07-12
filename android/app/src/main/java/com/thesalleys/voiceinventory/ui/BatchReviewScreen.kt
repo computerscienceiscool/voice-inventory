@@ -25,9 +25,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.content.Intent
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.thesalleys.voiceinventory.AppViewModel
 import org.json.JSONObject
 
@@ -106,11 +109,26 @@ fun BatchReviewScreen(vm: AppViewModel, onBack: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
+        val context = LocalContext.current
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             OutlinedButton(onClick = onBack) { Text("← Capture") }
+            Spacer(Modifier.weight(1f))
+            OutlinedButton(onClick = {
+                vm.exportCsv { file ->
+                    val uri = FileProvider.getUriForFile(
+                        context, "${context.packageName}.fileprovider", file,
+                    )
+                    val share = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/csv"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(share, "Export inventory"))
+                }
+            }) { Text("Export") }
             Button(onClick = { vm.sync { syncNote = it; reloadKey++ } }) { Text("Sync") }
         }
         if (syncNote.isNotEmpty()) {
