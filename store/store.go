@@ -354,8 +354,12 @@ func (s *Store) List(f Filter) ([]*observation.Observation, error) {
 		where = "WHERE " + strings.Join(conds, " AND ")
 	}
 	tail := "ORDER BY o.id DESC"
-	if f.Limit > 0 {
+	switch {
+	case f.Limit > 0:
 		tail += fmt.Sprintf(" LIMIT %d OFFSET %d", f.Limit, f.Offset)
+	case f.Offset > 0:
+		// SQLite requires a LIMIT clause for OFFSET; -1 means unlimited.
+		tail += fmt.Sprintf(" LIMIT -1 OFFSET %d", f.Offset)
 	}
 	return s.query(where, tail, args...)
 }

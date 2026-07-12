@@ -561,15 +561,18 @@ func (p *parse) anyConsumed(start, end int) bool {
 	return false
 }
 
-// qtyFromSpan accepts a span that is exactly a number, optionally followed
-// by a single known unit token.
+// qtyFromSpan accepts a span that is exactly a number — including its
+// approximation markers ("no, about fifteen") — optionally followed by a
+// single known unit token.
 func (p *parse) qtyFromSpan(start, end int) (*float64, bool, *string, bool) {
-	idx, ok := p.numStart[start]
-	if !ok {
-		return nil, false, nil, false
+	var n *lang.Number
+	for i := range p.nums {
+		if p.nums[i].MarkStart == start || p.nums[i].Start == start {
+			n = &p.nums[i]
+			break
+		}
 	}
-	n := p.nums[idx]
-	if n.Vague {
+	if n == nil || n.Vague {
 		return nil, false, nil, false
 	}
 	if n.End == end {

@@ -131,3 +131,11 @@ the remainder is native-shell / device / backend work outside the Go core.
 - [x] ~~097 - Audio quality (reviewer suspicion, confirmed): per-chunk stateless resampling dropped ~0.13% of samples at non-integer ratios (44.1 kHz mics) and reset interpolation phase every chunk~~ — fixed: stateful `audio.Resampler` carries phase/last-sample across chunks; §8.3 high-pass filter (`audio.HighPassFilter`) is now actually wired into the session pipeline (config `high_pass_hz`, default 100, 0 disables)
 - [x] ~~098 - Security (reviewer suspicion, confirmed): the grid capability token signed only identity claims — a tampered payload (quantity/location) passed verification~~ — fixed: token now carries a SHA-256 payload digest (CWT private claim); DecodeObservation rejects any payload that doesn't match; tamper regression test
 - [x] ~~099 - Usability: `vinv transcript "text" -lang es` silently swallowed the trailing flag into the utterance (Go flag parsing stops at the first positional arg) and parsed Spanish with the English table~~ — fixed: trailing flags are rejected with a clear error
+
+## Bug-hunt round 3 (2026-07-11, fuzzing + staticcheck + targeted probes)
+
+- [x] ~~100 - Correctness: a voice correction with an approximation marker ("no, about fifteen") was not recognized — the quantity matcher only looked at the number word's start, not its marker span~~ — fixed in both the mid-utterance and command paths; regression tests
+- [x] ~~101 - Correctness: `store.List` silently ignored `Offset` when no `Limit` was set (SQLite needs a LIMIT clause for OFFSET)~~ — fixed with `LIMIT -1`; regression test
+- [x] ~~102 - Robustness: `audio.EncodeWAV16` would write a corrupt RIFF header for buffers past the uint32 size field~~ — fixed: refuses oversized buffers
+- [x] ~~103 - Hygiene: two staticcheck dead-code findings (unused CLI listener field, unused test helper)~~ — removed; staticcheck now fully clean
+- Verification added this round (no bugs found by it — that's the point): three fuzz targets committed (`parser.FuzzParse` w/ invariant checks, `audio.FuzzDecodeWAV`, `grid.FuzzDecodeObservation`) — ~14M executions, zero panics; hostile-string SQLite round-trip test (NUL bytes, invalid UTF-8, injection strings, 25 KB values) passes byte-for-byte

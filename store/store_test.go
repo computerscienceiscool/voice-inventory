@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -384,5 +385,54 @@ func TestAudioPurgeSubsecondTimestamps(t *testing.T) {
 	}
 	if len(cands) != 1 {
 		t.Errorf("record synced before cutoff must purge: %+v", cands)
+	}
+}
+
+// Offset must work without an explicit Limit (SQLite needs LIMIT -1).
+func TestListOffsetWithoutLimit(t *testing.T) {
+	s := openTest(t)
+	for i := 0; i < 4; i++ {
+		if err := s.Insert(newObs(t)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.List(Filter{Offset: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("offset-only list returned %d records, want 1", len(got))
+	}
+}
+
+// Hostile field content must round-trip byte-for-byte: transcripts from
+// ASR can contain anything.
+func TestNastyStringRoundTrip(t *testing.T) {
+	s := openTest(t)
+	nasty := []string{
+		"NUL\x00inside",
+		"quotes ' \" `` and; DROP TABLE observations; --",
+		"emoji 📦🔊 and ünïcödé ñ",
+		"newline\nand\ttabs\r\n",
+		string([]byte{0xff, 0xfe, 'x'}), // invalid UTF-8
+		strings.Repeat("long ", 5000),
+	}
+	for i, v := range nasty {
+		o := newObs(t)
+		o.RawTranscript = v
+		o.Parsed.ItemText = v
+		desc := v
+		o.Parsed.Description = &desc
+		if err := s.Insert(o); err != nil {
+			t.Fatalf("case %d: insert: %v", i, err)
+		}
+		got, err := s.Get(o.ID)
+		if err != nil {
+			t.Fatalf("case %d: get: %v", i, err)
+		}
+		if got.RawTranscript != v || got.Parsed.ItemText != v || *got.Parsed.Description != v {
+			t.Errorf("case %d: round trip mangled the value (len %d→%d)",
+				i, len(v), len(got.RawTranscript))
+		}
 	}
 }

@@ -162,7 +162,7 @@ func cmdParse(args []string) error {
 // --- capture pipeline -------------------------------------------------------
 
 // cliListener prints session events for interactive use.
-type cliListener struct{ confirmed bool }
+type cliListener struct{}
 
 func (c *cliListener) OnState(s session.State) {}
 func (c *cliListener) OnLevel(float64)         {}

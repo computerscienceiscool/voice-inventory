@@ -127,6 +127,10 @@ func EncodeWAV16(w io.Writer, samples []float32, sampleRate int) error {
 	if sampleRate <= 0 {
 		return errors.New("audio: sample rate must be positive")
 	}
+	if len(samples) > (1<<31)/2 {
+		// RIFF sizes are uint32; refuse instead of writing a corrupt header.
+		return errors.New("audio: buffer too large for a WAV file")
+	}
 	data := Float32ToInt16(samples)
 	var header [44]byte
 	copy(header[0:], "RIFF")

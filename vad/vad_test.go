@@ -15,8 +15,6 @@ func sine(freq float64, n int, amp float64) []float32 {
 	return out
 }
 
-func silence(n int) []float32 { return make([]float32, n) }
-
 // noiseFloor produces a quiet hum below the activation threshold.
 func noiseFloor(n int) []float32 {
 	return sine(120, n, 0.002)

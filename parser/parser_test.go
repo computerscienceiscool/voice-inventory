@@ -446,3 +446,16 @@ func TestOverrideUnitNotDemoted(t *testing.T) {
 		t.Errorf("corrected-away unit resurrected as item: %q", r.Parsed.ItemText)
 	}
 }
+
+// Approximation markers must survive inside corrections: "no, about fifteen".
+func TestApproxQuantityCorrection(t *testing.T) {
+	r := Parse("Twelve boxes of RJ45 in bin A-14, no, about fifteen", enOpts())
+	checkQty(t, r, fp(15))
+	if !r.QuantityApprox {
+		t.Error("corrected quantity should stay approximate")
+	}
+	cmd, ok := ParseCommand("no, about fifteen", enOpts())
+	if !ok || cmd.Kind != CmdSetField || cmd.Field != "quantity" || cmd.Value != "15" {
+		t.Errorf("command = %+v ok=%v", cmd, ok)
+	}
+}
