@@ -124,7 +124,6 @@ type Table struct {
 	NumArticles   map[string]bool // a, an / un, una (run starters before scales/dozens)
 	approxSet     *PhraseSet
 	vagues        []vagueEntry
-	vagueSet      *PhraseSet
 
 	// Units: folded spoken form → canonical singular form.
 	Units map[string]string

@@ -41,6 +41,7 @@ var englishTable = &Table{
 		{Phrase{"a", "few"}, 3},
 		{Phrase{"a", "handful"}, 3},
 		{Phrase{"several"}, math.NaN()},
+		{Phrase{"some"}, math.NaN()},
 		{Phrase{"many"}, math.NaN()},
 		{Phrase{"a", "bunch"}, math.NaN()},
 		{Phrase{"a", "lot"}, math.NaN()},

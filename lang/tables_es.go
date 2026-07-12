@@ -94,7 +94,6 @@ var spanishTable = &Table{
 		add("litro", "litros")
 		add("galon", "galones")
 		add("par", "pares")
-		add("cada", "cada uno")
 		return u
 	}(),
 	Of: set("de", "del"),
