@@ -24,21 +24,62 @@ func (t *Table) ScanNumbers(tokens []string) []Number {
 	var out []Number
 	i := 0
 	for i < len(tokens) {
-		if entry, vlen := t.matchVague(tokens, i); vlen > 0 && !t.startsNumber(tokens, i+vlen) {
-			num := Number{
-				Value:     entry.value,
-				Approx:    true,
-				Vague:     math.IsNaN(entry.value),
-				Start:     i,
-				End:       i + vlen,
-				MarkStart: i,
+		if entry, vlen := t.matchVague(tokens, i); vlen > 0 {
+			next := i + vlen
+			// "a couple hundred", "a few thousand": the vague value seeds
+			// the scale words that follow.
+			if !math.IsNaN(entry.value) && t.startsScale(tokens, next) {
+				if num, ok := t.parseSeededRun(tokens, next, entry.value); ok {
+					num.Start = i
+					num.MarkStart = i
+					num.Approx = true
+					if m := t.MatchApproxEndingAt(tokens, i); m > 0 {
+						num.MarkStart = i - m
+					}
+					out = append(out, num)
+					i = num.End
+					continue
+				}
 			}
-			if m := t.MatchApproxEndingAt(tokens, i); m > 0 {
-				num.MarkStart = i - m
+			// "several hundred": no usable value, but the scale run belongs
+			// to the vague phrase — consume it so it can't leak out as an
+			// exact, full-confidence number.
+			if math.IsNaN(entry.value) && t.startsScale(tokens, next) {
+				if num, ok := t.parseRun(tokens, next); ok {
+					v := Number{
+						Value:     math.NaN(),
+						Approx:    true,
+						Vague:     true,
+						Start:     i,
+						End:       num.End,
+						MarkStart: i,
+					}
+					if m := t.MatchApproxEndingAt(tokens, i); m > 0 {
+						v.MarkStart = i - m
+					}
+					out = append(out, v)
+					i = v.End
+					continue
+				}
 			}
-			out = append(out, num)
-			i = num.End
-			continue
+			// "some forty": the phrase is an approximation marker for the
+			// number that follows — let the run path handle it.
+			if !t.startsNumber(tokens, next) {
+				num := Number{
+					Value:     entry.value,
+					Approx:    true,
+					Vague:     math.IsNaN(entry.value),
+					Start:     i,
+					End:       next,
+					MarkStart: i,
+				}
+				if m := t.MatchApproxEndingAt(tokens, i); m > 0 {
+					num.MarkStart = i - m
+				}
+				out = append(out, num)
+				i = num.End
+				continue
+			}
 		}
 		if num, ok := t.parseRun(tokens, i); ok {
 			num.MarkStart = num.Start
@@ -53,6 +94,20 @@ func (t *Table) ScanNumbers(tokens []string) []Number {
 		i++
 	}
 	return out
+}
+
+// startsScale reports whether tokens[i] is a scale word (hundred,
+// thousand, dozen) that a preceding vague value can multiply.
+func (t *Table) startsScale(tokens []string, i int) bool {
+	if i >= len(tokens) {
+		return false
+	}
+	tok := tokens[i]
+	if t.ScaleHundred[tok] || t.DozenWords[tok] {
+		return true
+	}
+	_, ok := t.ScaleBig[tok]
+	return ok
 }
 
 // startsNumber reports whether tokens[i] can begin a numeric run.
@@ -106,10 +161,20 @@ func (t *Table) matchVague(tokens []string, i int) (vagueEntry, int) {
 // parseRun consumes the longest well-formed number-word run starting at
 // tokens[start] and returns its value.
 func (t *Table) parseRun(tokens []string, start int) (Number, bool) {
+	return t.parseRunFrom(tokens, start, 0, false)
+}
+
+// parseSeededRun parses a run whose small-value accumulator starts at seed
+// ("a couple" = 2 before "hundred").
+func (t *Table) parseSeededRun(tokens []string, start int, seed float64) (Number, bool) {
+	return t.parseRunFrom(tokens, start, seed, true)
+}
+
+func (t *Table) parseRunFrom(tokens []string, start int, seed float64, seeded bool) (Number, bool) {
 	i := start
-	var total, cur float64
-	started := false
-	onesSet, tensSet, hundSet := false, false, false
+	total, cur := 0.0, seed
+	started := seeded
+	onesSet, tensSet, hundSet := seeded, false, false
 	halfPending := false
 
 	for i < len(tokens) {
@@ -242,14 +307,16 @@ func (t *Table) parseRun(tokens []string, start int) (Number, bool) {
 			}
 			cur = v
 			started = true
-			onesSet, tensSet, hundSet = true, true, true
+			// Block further small words ("14 five") but allow scales:
+			// "3 hundred", "3 thousand", "3 dozen".
+			onesSet, tensSet, hundSet = true, true, false
 			i++
-			continue // allow "3 dozen", "3 thousand"
+			continue
 		}
 		break
 	}
 
-	if !started {
+	if !started || (seeded && i == start) {
 		return Number{}, false
 	}
 	return Number{Value: total + cur, Start: start, End: i}, true

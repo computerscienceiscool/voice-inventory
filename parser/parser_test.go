@@ -164,6 +164,25 @@ func TestParseVariants(t *testing.T) {
 		}
 	})
 
+	t.Run("item prefers quantity clause", func(t *testing.T) {
+		r := Parse("damaged stuff, twelve boxes of RJ45 connectors in bin A-14", enOpts())
+		if r.Parsed.ItemText != "RJ45 connectors" {
+			t.Errorf("item = %q, want the span after the unit", r.Parsed.ItemText)
+		}
+		checkStr(t, "description", r.Parsed.Description, "damaged stuff")
+		checkQty(t, r, fp(12))
+	})
+
+	t.Run("empty resolver scores like no resolver", func(t *testing.T) {
+		opts := enOpts()
+		opts.Resolver = refdata.NewIndex(nil, nil)
+		r := Parse("twelve boxes of RJ45 in bin A-14", opts)
+		if r.CertLocation != 0.75 || r.CertItem != 0.8 {
+			t.Errorf("certainties with empty refdata: loc %.2f item %.2f, want 0.75/0.80",
+				r.CertLocation, r.CertItem)
+		}
+	})
+
 	t.Run("empty input", func(t *testing.T) {
 		r := Parse("", enOpts())
 		if r.Parsed.ItemText != "" || r.Parsed.Quantity != nil {
@@ -387,5 +406,43 @@ func TestTokenizer(t *testing.T) {
 	toks = tokenize("1,200, more")
 	if toks[0].Fold != "1,200" || !toks[0].ClauseEnd {
 		t.Errorf("numeric comma handling wrong: %+v", toks)
+	}
+}
+
+// Whisper often renders spoken codes with a spaced dash: "bin A - 14".
+func TestSpacedDashCode(t *testing.T) {
+	r := Parse("nails in bin A - 14", enOpts())
+	if r.Parsed.LocationText != "A-14" {
+		t.Errorf("location = %q, want A-14", r.Parsed.LocationText)
+	}
+	checkQty(t, r, nil)
+	if r.Parsed.ItemText != "nails" {
+		t.Errorf("item = %q", r.Parsed.ItemText)
+	}
+}
+
+// "several hundred" must stay a vague, flagged quantity — not an exact 100.
+func TestVagueScaleQuantity(t *testing.T) {
+	r := Parse("several hundred bolts in bin B-2", enOpts())
+	checkQty(t, r, nil)
+	if !r.QuantityVague {
+		t.Error("expected vague quantity")
+	}
+	if r.Parsed.ItemText != "bolts" {
+		t.Errorf("item = %q", r.Parsed.ItemText)
+	}
+	if r.CertQuantity >= 0.5 {
+		t.Errorf("cert quantity = %v, want low", r.CertQuantity)
+	}
+}
+
+// A corrected unit must not be demoted away, and the corrected-away word
+// must not come back as the item.
+func TestOverrideUnitNotDemoted(t *testing.T) {
+	r := Parse("forty tubes in aisle 3, no, fifty reels", enOpts())
+	checkQty(t, r, fp(50))
+	checkStr(t, "unit", r.Parsed.Unit, "reels")
+	if r.Parsed.ItemText == "tubes" {
+		t.Errorf("corrected-away unit resurrected as item: %q", r.Parsed.ItemText)
 	}
 }

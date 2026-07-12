@@ -157,7 +157,7 @@ func TestUnsyncedAndMarkSynced(t *testing.T) {
 		}
 		ids = append(ids, o.ID)
 	}
-	unsynced, err := s.UnsyncedConfirmed(0)
+	unsynced, err := s.UnsyncedConfirmed("", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,5 +350,39 @@ func TestInsertValidation(t *testing.T) {
 	o.ID = "not-a-uuid"
 	if err := s.Insert(o); err == nil {
 		t.Error("invalid id should fail validation")
+	}
+}
+
+// Sub-second timestamps must compare correctly in SQL: time.RFC3339Nano
+// trims trailing zeros, which broke lexicographic ordering ("…00.5Z" sorts
+// before "…00Z"). The store uses a fixed-width format instead.
+func TestAudioPurgeSubsecondTimestamps(t *testing.T) {
+	s := openTest(t)
+
+	// synced_at strictly AFTER the cutoff (by 0.5 s) → must NOT purge
+	oA := newObs(t)
+	refA := "a.wav"
+	oA.AudioRef = &refA
+	_ = s.Insert(oA)
+	_ = s.Confirm(oA.ID)
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := s.MarkSynced([]string{oA.ID}, cutoff.Add(500*time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	cands, err := s.AudioToPurge(cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 0 {
+		t.Errorf("record synced after cutoff must not purge: %+v", cands)
+	}
+
+	// synced_at strictly BEFORE a sub-second cutoff → must purge
+	cands, err = s.AudioToPurge(cutoff.Add(600 * time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 1 {
+		t.Errorf("record synced before cutoff must purge: %+v", cands)
 	}
 }

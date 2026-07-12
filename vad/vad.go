@@ -20,6 +20,7 @@ type Config struct {
 	MinRMS          float64 // absolute activation floor, default 0.010
 	ActivationRatio float64 // speech threshold = floor × ratio, default 2.5
 	MaxZCR          float64 // above this zero-crossing rate = hiss, default 0.35
+	MinZCR          float64 // below this = pure low-frequency hum, default 0.02
 }
 
 func (c Config) withDefaults() Config {
@@ -50,6 +51,9 @@ func (c Config) withDefaults() Config {
 	if c.MaxZCR <= 0 {
 		c.MaxZCR = 0.35
 	}
+	if c.MinZCR <= 0 {
+		c.MinZCR = 0.02
+	}
 	return c
 }
 
@@ -73,22 +77,31 @@ type Event struct {
 	Truncated bool      // utterance hit MaxUtteranceMS
 }
 
+// Noise-floor adaptation rates per frame: the floor drops instantly to any
+// quieter frame and rises slowly toward louder ambience — fast enough to
+// adapt out a fan or compressor between utterances, slow enough (~60 s
+// time constant while speaking) never to swallow a real utterance before
+// the 30 s cap.
+const (
+	floorRiseIdle   = 0.004
+	floorRiseSpeech = 0.0005
+)
+
 // Detector segments speech from a stream of mono float32 samples.
 type Detector struct {
-	cfg       Config
-	frameLen  int
-	buf       []float32
-	preRoll   []float32 // ring of recent audio while idle
-	preMax    int
-	utter     []float32
-	inSpeech  bool
-	speechRun int
-	silRun    int
-	noise     []float64 // recent non-speech frame RMS
-	noiseIdx  int
-	noiseFull bool
-	maxLen    int
-	silKeep   int
+	cfg         Config
+	frameLen    int
+	buf         []float32
+	preRoll     []float32 // ring of recent audio while idle
+	preMax      int
+	utter       []float32
+	inSpeech    bool
+	speechRun   int
+	silRun      int
+	floor       float64 // adaptive ambient level
+	floorSeeded bool
+	maxLen      int
+	silKeep     int
 }
 
 // NewDetector builds a detector; SampleRate must be positive.
@@ -102,7 +115,6 @@ func NewDetector(cfg Config) *Detector {
 		cfg:      cfg,
 		frameLen: frameLen,
 		preMax:   cfg.SampleRate * cfg.PreRollMS / 1000,
-		noise:    make([]float64, 64),
 		maxLen:   cfg.SampleRate * cfg.MaxUtteranceMS / 1000,
 		silKeep:  cfg.SampleRate * cfg.HangoverMS / 1000,
 	}
@@ -146,17 +158,31 @@ func (d *Detector) reset() {
 func (d *Detector) processFrame(frame []float32) []Event {
 	rms := frameRMS(frame)
 	zcr := frameZCR(frame)
-	speech := rms >= d.threshold() && zcr <= d.cfg.MaxZCR
+
+	// Adaptive floor: drop instantly, rise slowly. Seeding is capped at
+	// MinRMS so a capture that begins mid-word doesn't set the floor to
+	// speech level and mask itself.
+	if !d.floorSeeded {
+		d.floor = math.Min(rms, d.cfg.MinRMS)
+		d.floorSeeded = true
+	} else if rms < d.floor {
+		d.floor = rms
+	} else {
+		rise := floorRiseIdle
+		if d.inSpeech {
+			rise = floorRiseSpeech
+		}
+		d.floor += (rms - d.floor) * rise
+	}
+	threshold := d.floor * d.cfg.ActivationRatio
+	if threshold < d.cfg.MinRMS {
+		threshold = d.cfg.MinRMS
+	}
+	// Speech is loud enough above ambience AND spectrally speech-like:
+	// very low ZCR is a pure hum (fan, HVAC), very high is hiss.
+	speech := rms >= threshold && zcr <= d.cfg.MaxZCR && zcr >= d.cfg.MinZCR
 
 	events := []Event{{Kind: EventLevel, RMS: rms}}
-
-	if !speech {
-		d.noise[d.noiseIdx] = rms
-		d.noiseIdx = (d.noiseIdx + 1) % len(d.noise)
-		if d.noiseIdx == 0 {
-			d.noiseFull = true
-		}
-	}
 
 	if !d.inSpeech {
 		d.preRoll = append(d.preRoll, frame...)
@@ -212,27 +238,6 @@ func (d *Detector) trimTail(u []float32) []float32 {
 	return u[:len(u)-cut]
 }
 
-func (d *Detector) threshold() float64 {
-	floor := math.Inf(1)
-	n := d.noiseIdx
-	if d.noiseFull {
-		n = len(d.noise)
-	}
-	for i := 0; i < n; i++ {
-		if d.noise[i] < floor {
-			floor = d.noise[i]
-		}
-	}
-	if math.IsInf(floor, 1) {
-		floor = 0
-	}
-	t := floor * d.cfg.ActivationRatio
-	if t < d.cfg.MinRMS {
-		t = d.cfg.MinRMS
-	}
-	return t
-}
-
 func frameRMS(frame []float32) float64 {
 	var sum float64
 	for _, s := range frame {
@@ -255,20 +260,21 @@ func frameZCR(frame []float32) float64 {
 }
 
 // Trim runs the detector over a complete buffer (push-to-talk capture) and
-// returns the first trimmed utterance. ok is false when no speech was found.
+// returns the speech with leading/trailing/long-internal silences removed.
+// A pause mid-sentence yields multiple detector utterances; they are
+// concatenated so a held-button capture never loses its tail. ok is false
+// when no speech was found.
 func Trim(pcm []float32, cfg Config) ([]float32, bool) {
 	d := NewDetector(cfg)
-	var utterance []float32
-	found := false
+	var out []float32
 	take := func(evs []Event) {
 		for _, e := range evs {
-			if e.Kind == EventUtterance && !found {
-				utterance = e.Utterance
-				found = true
+			if e.Kind == EventUtterance {
+				out = append(out, e.Utterance...)
 			}
 		}
 	}
 	take(d.Process(pcm))
 	take(d.Flush())
-	return utterance, found
+	return out, len(out) > 0
 }

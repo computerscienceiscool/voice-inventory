@@ -159,6 +159,36 @@ func (o *Observation) Validate() error {
 	return nil
 }
 
+// Clone returns a deep copy safe to hand to another goroutine: mutating
+// the clone (or the original) never writes through shared slices or
+// pointer fields.
+func (o *Observation) Clone() *Observation {
+	if o == nil {
+		return nil
+	}
+	cp := *o
+	cp.Corrections = append([]Correction(nil), o.Corrections...)
+	cp.ReviewReasons = append([]string(nil), o.ReviewReasons...)
+	cp.AudioRef = cloneStr(o.AudioRef)
+	cp.Parsed.PartNumber = cloneStr(o.Parsed.PartNumber)
+	cp.Parsed.Unit = cloneStr(o.Parsed.Unit)
+	cp.Parsed.LocationID = cloneStr(o.Parsed.LocationID)
+	cp.Parsed.Description = cloneStr(o.Parsed.Description)
+	if o.Parsed.Quantity != nil {
+		q := *o.Parsed.Quantity
+		cp.Parsed.Quantity = &q
+	}
+	return &cp
+}
+
+func cloneStr(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
 // ApplyCorrection records a field change in the corrections log.
 func (o *Observation) ApplyCorrection(field, from, to string, at time.Time) {
 	o.Corrections = append(o.Corrections, Correction{

@@ -114,7 +114,7 @@ var spanishTable = &Table{
 	),
 	FieldAliases: map[string]string{
 		"ubicacion": "location", "lugar": "location", "sitio": "location",
-		"bin": "location",
+		"bin":      "location",
 		"cantidad": "quantity", "numero": "quantity", "cuenta": "quantity",
 		"articulo": "item", "pieza": "item", "parte": "item",
 		"producto": "item", "item": "item", "nombre": "item",

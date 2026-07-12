@@ -8,15 +8,15 @@ import (
 
 func TestFold(t *testing.T) {
 	cases := map[string]string{
-		"Ubicación":  "ubicacion",
-		"MÁS":        "mas",
-		"año":        "ano",
-		"Boxes":      "boxes",
-		"cañería":    "caneria",
-		"dieciséis":  "dieciseis",
-		"plain":      "plain",
-		"A-14":       "a-14",
-		"Über":       "uber",
+		"Ubicación": "ubicacion",
+		"MÁS":       "mas",
+		"año":       "ano",
+		"Boxes":     "boxes",
+		"cañería":   "caneria",
+		"dieciséis": "dieciseis",
+		"plain":     "plain",
+		"A-14":      "a-14",
+		"Über":      "uber",
 	}
 	for in, want := range cases {
 		if got := Fold(in); got != want {
@@ -167,4 +167,21 @@ func TestGetTables(t *testing.T) {
 	if !Known(English) || !Known(Spanish) || Known(Auto) {
 		t.Error("Known() wrong")
 	}
+}
+
+// Digits must combine with scale words, and vague values must multiply
+// them ("a couple hundred").
+func TestScanNumbersScaleCombos(t *testing.T) {
+	en := Get(English)
+	runNumCases(t, en, []numCase{
+		{in: "3 hundred", value: 300},
+		{in: "3 thousand", value: 3000},
+		{in: "a couple hundred", value: 200, approx: true},
+		{in: "a few thousand", value: 3000, approx: true},
+		{in: "a couple dozen", value: 24, approx: true},
+	})
+	es := Get(Spanish)
+	runNumCases(t, es, []numCase{
+		{in: "un par de", value: 2, approx: true},
+	})
 }

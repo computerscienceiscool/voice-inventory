@@ -140,6 +140,12 @@ func bestScore(text string, e entry, code bool) float64 {
 	return best
 }
 
+// HasLocations reports whether any location reference data is loaded.
+func (x *Index) HasLocations() bool { return x != nil && len(x.locations) > 0 }
+
+// HasParts reports whether any part reference data is loaded.
+func (x *Index) HasParts() bool { return x != nil && len(x.parts) > 0 }
+
 // ResolveLocation maps spoken location text to a known location ID.
 // ok is true only when the best score clears the threshold.
 func (x *Index) ResolveLocation(text string) (id string, score float64, ok bool) {

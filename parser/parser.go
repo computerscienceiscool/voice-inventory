@@ -170,7 +170,13 @@ const trailPunct = ")]}\"'»”’"
 func tokenize(text string) []token {
 	var toks []token
 	for _, f := range strings.Fields(text) {
-		if f == "-" || f == "—" || f == "–" {
+		// A bare ASCII dash is how Whisper often renders a spoken code
+		// ("bin A - 14") — drop it without breaking the clause. Typographic
+		// dashes are prose separators and do end the clause.
+		if f == "-" {
+			continue
+		}
+		if f == "—" || f == "–" {
 			if len(toks) > 0 {
 				toks[len(toks)-1].ClauseEnd = true
 			}
@@ -610,6 +616,8 @@ func parseTokens(toks []token, opts Options) Result {
 	var qty *float64
 	qtyApprox, qtyVague, qtyFound := false, false, false
 	var unit *string
+	afterQty := -1 // token position right after the quantity/unit span
+	unitIdx := -1  // token index the unit came from
 	for _, n := range p.nums {
 		if p.anyConsumed(n.MarkStart, n.End) {
 			continue
@@ -635,12 +643,14 @@ func parseTokens(toks []token, opts Options) Result {
 			if _, isUnit := p.opts.unitOf(p.folds[j]); isUnit {
 				u := strings.ToLower(p.toks[j].Orig)
 				unit = &u
+				unitIdx = j
 				p.consume(j, j+1)
 				j++
 			} else if j+1 < end && p.t.Of[p.folds[j+1]] {
 				// unknown unit kept as raw text (§5.2)
 				u := strings.ToLower(p.toks[j].Orig)
 				unit = &u
+				unitIdx = j
 				p.consume(j, j+1)
 				j++
 			}
@@ -649,6 +659,7 @@ func parseTokens(toks []token, opts Options) Result {
 				j++
 			}
 		}
+		afterQty = j
 		break
 	}
 
@@ -666,6 +677,7 @@ func parseTokens(toks []token, opts Options) Result {
 					qtyFound, articleQty = true, true
 					u := strings.ToLower(p.toks[i+1].Orig)
 					unit = &u
+					unitIdx = i + 1
 					p.consume(i, i+2)
 					j := i + 2
 					end := p.clauseEnd(i)
@@ -673,6 +685,7 @@ func parseTokens(toks []token, opts Options) Result {
 						p.consume(j, j+1)
 						j++
 					}
+					afterQty = j
 				}
 			}
 			if qtyFound {
@@ -682,6 +695,7 @@ func parseTokens(toks []token, opts Options) Result {
 	}
 
 	// 4. Correction override wins.
+	unitFromOverride := false
 	if ov.qty != nil {
 		if qty != nil || qtyVague {
 			res.Overridden = append(res.Overridden, "quantity")
@@ -691,14 +705,28 @@ func parseTokens(toks []token, opts Options) Result {
 		qtyVague = false
 		if ov.unit != nil {
 			unit = ov.unit
+			unitFromOverride = true
 		}
 	}
 
-	// 5. Item: the contiguous unconsumed run after the quantity/unit (or the
-	// first unconsumed run when no quantity was spoken).
-	itemStart := 0
-	for itemStart < len(p.toks) && p.consumed[itemStart] {
-		itemStart++
+	// 5. Item: prefer the first unconsumed run at/after the quantity+unit
+	// ("…, twelve boxes of RJ45 …" → the item follows the unit even when an
+	// earlier clause holds free text); fall back to the first unconsumed
+	// run anywhere when no quantity was spoken or nothing follows it.
+	itemStart := len(p.toks)
+	if afterQty >= 0 {
+		for i := afterQty; i < len(p.toks); i++ {
+			if !p.consumed[i] {
+				itemStart = i
+				break
+			}
+		}
+	}
+	if itemStart == len(p.toks) {
+		itemStart = 0
+		for itemStart < len(p.toks) && p.consumed[itemStart] {
+			itemStart++
+		}
 	}
 	itemText := ""
 	if itemStart < len(p.toks) {
@@ -713,6 +741,15 @@ func parseTokens(toks []token, opts Options) Result {
 		}
 		itemText = strings.Join(words, " ")
 		p.consume(itemStart, itemEnd)
+	}
+
+	// "forty tubes in aisle 3": when nothing is left to be the item, the
+	// unit word was the item all along — demote it. Never demote a unit the
+	// operator supplied via a correction ("…, no, fifty reels"): that would
+	// resurrect the corrected-away word.
+	if itemText == "" && unit != nil && unitIdx >= 0 && !unitFromOverride {
+		itemText = p.toks[unitIdx].Orig
+		unit = nil
 	}
 
 	// 6. Description: every remaining unconsumed run.
@@ -774,11 +811,11 @@ func parseTokens(toks []token, opts Options) Result {
 			res.Parsed.LocationID = &lid
 			res.LocationScore = score
 			res.CertLocation = score
-		} else if opts.Resolver != nil {
+		} else if opts.Resolver.HasLocations() {
 			res.LocationScore = score
-			res.CertLocation = 0.6
+			res.CertLocation = 0.6 // reference data exists but no match
 		} else {
-			res.CertLocation = 0.75
+			res.CertLocation = 0.75 // nothing to match against
 		}
 	}
 
@@ -788,11 +825,11 @@ func parseTokens(toks []token, opts Options) Result {
 			res.Parsed.PartNumber = &pnCopy
 			res.ItemScore = score
 			res.CertItem = score
-		} else if opts.Resolver != nil {
+		} else if opts.Resolver.HasParts() {
 			res.ItemScore = score
-			res.CertItem = 0.7
+			res.CertItem = 0.7 // reference data exists but no match
 		} else {
-			res.CertItem = 0.8
+			res.CertItem = 0.8 // nothing to match against
 		}
 	}
 	return res

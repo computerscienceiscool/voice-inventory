@@ -22,7 +22,7 @@ func Resample(in []float32, fromRate, toRate int) []float32 {
 		return in
 	}
 	ratio := float64(fromRate) / float64(toRate)
-	outLen := int(math.Floor(float64(len(in))/ratio))
+	outLen := int(math.Floor(float64(len(in)) / ratio))
 	if outLen == 0 {
 		return nil
 	}
@@ -149,6 +149,10 @@ func EncodeWAV16(w io.Writer, samples []float32, sampleRate int) error {
 	return err
 }
 
+// maxWAVChunk caps a single WAV chunk allocation (≈45 min of 16-bit
+// 48 kHz stereo) so a corrupt or malicious header can't demand gigabytes.
+const maxWAVChunk = 512 << 20
+
 // DecodeWAV reads a PCM WAV file (16-bit int or 32-bit float, any channel
 // count) and returns mono float32 samples plus the sample rate.
 func DecodeWAV(r io.Reader) ([]float32, int, error) {
@@ -176,6 +180,9 @@ func DecodeWAV(r io.Reader) ([]float32, int, error) {
 		}
 		id := string(chunk[0:4])
 		size := binary.LittleEndian.Uint32(chunk[4:])
+		if size > maxWAVChunk {
+			return nil, 0, fmt.Errorf("audio: %s chunk of %d bytes exceeds the %d-byte limit", id, size, maxWAVChunk)
+		}
 		switch id {
 		case "fmt ":
 			body := make([]byte, size)

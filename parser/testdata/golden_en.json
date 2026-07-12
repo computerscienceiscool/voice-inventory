@@ -1,0 +1,57 @@
+[
+  {
+    "transcript": "Twelve boxes of RJ45 connectors in bin A-14",
+    "quantity": 12, "unit": "boxes", "item": "RJ45 connectors", "location": "A-14"
+  },
+  {
+    "transcript": "Bin C-7, forty spools of Cat6, three have water damage",
+    "quantity": 40, "unit": "spools", "item": "Cat6", "location": "C-7",
+    "description": "three have water damage"
+  },
+  {
+    "transcript": "About a dozen assorted brackets, aisle five shelf two",
+    "quantity": 12, "approx": true, "item": "assorted brackets", "location": "aisle 5 / shelf 2"
+  },
+  {
+    "transcript": "three bags of washers in bin a 14",
+    "quantity": 3, "unit": "bags", "item": "washers", "location": "A-14"
+  },
+  {
+    "transcript": "a hundred feet of half inch conduit in rack 12",
+    "quantity": 100, "unit": "feet", "item": "half inch conduit", "location": "rack 12"
+  },
+  {
+    "transcript": "two dozen safety glasses on shelf 3",
+    "quantity": 24, "unit": null, "item": "safety glasses", "location": "shelf 3"
+  },
+  {
+    "transcript": "one pallet of paper towels in dock 2",
+    "quantity": 1, "unit": "pallet", "item": "paper towels", "location": "dock 2",
+    "note": "unknown units before 'of' are kept as raw text (§5.2)"
+  },
+  {
+    "transcript": "forty boxes in bin A-14",
+    "quantity": 40, "item": "boxes", "location": "A-14",
+    "note": "with nothing else spoken, the unit word is the item"
+  },
+  {
+    "transcript": "sixty five feet of Cat6 cable, bin B-9",
+    "quantity": 65, "unit": "feet", "item": "Cat6 cable", "location": "B-9"
+  },
+  {
+    "transcript": "empty bin D-4",
+    "quantity": null, "item": "empty", "location": "D-4"
+  },
+  {
+    "transcript": "five hundred hex bolts in bin E-1, some are rusty",
+    "quantity": 500, "item": "hex bolts", "location": "E-1", "description": "some are rusty"
+  },
+  {
+    "transcript": "Twelve boxes of RJ45 in bin A-40, no, A-14",
+    "quantity": 12, "unit": "boxes", "item": "RJ45", "location": "A-14"
+  },
+  {
+    "transcript": "roughly two hundred zip ties, zone 4",
+    "quantity": 200, "approx": true, "item": "zip ties", "location": "zone 4"
+  }
+]

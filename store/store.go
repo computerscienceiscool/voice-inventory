@@ -160,11 +160,16 @@ func (s *Store) migrate() error {
 // ---------------------------------------------------------------------------
 // Observations
 
-const timeFormat = time.RFC3339Nano
+// timeFormat is RFC3339 with FIXED-WIDTH nanoseconds. time.RFC3339Nano
+// trims trailing zeros, which breaks the lexicographic-equals-chronological
+// property that SQL string comparisons (AudioToPurge's synced_at < cutoff)
+// and ordering rely on: "…00.5Z" would sort before "…00Z".
+const timeFormat = "2006-01-02T15:04:05.000000000Z07:00"
 
 func fmtTime(t time.Time) string { return t.UTC().Format(timeFormat) }
 
-func parseTime(s string) (time.Time, error) { return time.Parse(timeFormat, s) }
+// parseTime accepts the fixed-width form and any RFC3339Nano variant.
+func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano, s) }
 
 func nullStr(p *string) any {
 	if p == nil {
@@ -355,13 +360,17 @@ func (s *Store) List(f Filter) ([]*observation.Observation, error) {
 	return s.query(where, tail, args...)
 }
 
-// UnsyncedConfirmed returns confirmed records oldest-first for upload.
-func (s *Store) UnsyncedConfirmed(limit int) ([]*observation.Observation, error) {
+// UnsyncedConfirmed returns confirmed records oldest-first for upload,
+// starting strictly after afterID ("" = from the beginning). The cursor
+// lets a push pass walk the whole queue even when the backend rejects some
+// records (they stay confirmed and are retried on the next pass) — without
+// it, rejected records at the head would starve everything behind them.
+func (s *Store) UnsyncedConfirmed(afterID string, limit int) ([]*observation.Observation, error) {
 	tail := "ORDER BY o.id ASC"
 	if limit > 0 {
 		tail += fmt.Sprintf(" LIMIT %d", limit)
 	}
-	return s.query(`WHERE o.status = 'confirmed'`, tail)
+	return s.query(`WHERE o.status = 'confirmed' AND o.id > ?`, tail, afterID)
 }
 
 // MarkSynced transitions the given confirmed records to synced in one

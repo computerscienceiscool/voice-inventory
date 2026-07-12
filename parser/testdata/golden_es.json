@@ -1,0 +1,35 @@
+[
+  {
+    "transcript": "doce cajas de conectores RJ45 en el bin A-14",
+    "quantity": 12, "unit": "cajas", "item": "conectores RJ45", "location": "A-14"
+  },
+  {
+    "transcript": "Bin C-7, cuarenta carretes de Cat6, tres tienen daño de agua",
+    "quantity": 40, "unit": "carretes", "item": "Cat6", "location": "C-7",
+    "description": "tres tienen daño de agua"
+  },
+  {
+    "transcript": "una docena de soportes surtidos, pasillo cinco estante dos",
+    "quantity": 12, "item": "soportes surtidos", "location": "pasillo 5 / estante 2"
+  },
+  {
+    "transcript": "unos cuarenta tubos en el pasillo tres",
+    "quantity": 40, "approx": true, "item": "tubos", "location": "pasillo 3"
+  },
+  {
+    "transcript": "cien metros de cable Cat6 en la zona 4",
+    "quantity": 100, "unit": "metros", "item": "cable Cat6", "location": "zona 4"
+  },
+  {
+    "transcript": "dos mil quinientas arandelas en el bin F-2",
+    "quantity": 2500, "item": "arandelas", "location": "F-2"
+  },
+  {
+    "transcript": "media docena de guantes en el estante uno",
+    "quantity": 6, "item": "guantes", "location": "estante 1"
+  },
+  {
+    "transcript": "doce cajas de tornillos en el bin A-40, digo, A-14",
+    "quantity": 12, "unit": "cajas", "item": "tornillos", "location": "A-14"
+  }
+]
