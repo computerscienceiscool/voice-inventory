@@ -1,6 +1,7 @@
 *.db
 *.db-wal
 *.db-shm
+vinv
 dist/
 *.wav
 android/.gradle/

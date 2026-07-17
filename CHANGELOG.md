@@ -80,7 +80,9 @@ Initial implementation of the voice-inventory Go core
   wall on desktop), and the mobile facade generates complete Java bindings
   via gobind (26 methods, 8 callbacks, no skips).
 
-### Not in 0.1.0
+### Not production-ready in 0.1.0
 
-Native UI shells, on-device whisper.cpp builds, the wake-phrase spotter,
-and the PromiseGrid agent transport — see [docs/roadmap.md](docs/roadmap.md).
+The repo now includes native shell scaffolds, but not first device-built,
+device-validated apps. On-device whisper.cpp builds, the wake-phrase spotter,
+and the PromiseGrid agent transport remain open — see
+[docs/roadmap.md](docs/roadmap.md).

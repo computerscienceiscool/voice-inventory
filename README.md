@@ -10,6 +10,15 @@ Speech-to-text runs locally through [whisper.cpp](https://github.com/ggml-org/wh
 — weights cache on the device once, so capture has **no per-utterance cost**,
 which is the whole premise (§1).
 
+## Status at a glance
+
+- **Works today:** the Go core, desktop CLI (`vinv`), mock backend, sync path,
+  CSV export, and the CI-tested package surface in this repo.
+- **Still scaffolded:** Android and iOS shells exist in `android/` and `ios/`,
+  but they are documented as unbuilt first-pass shells pending SDK/Xcode bring-up.
+- **Still missing for a field deployment:** device validation, recorded golden
+  audio clips, battery/latency runs, and the real warehouse field trial.
+
 ## What's here
 
 | Package | Spec | Purpose |
@@ -74,7 +83,8 @@ go test -race ./...
 ```
 
 The golden-audio suite (§15) runs end-to-end ASR→parse when whisper.cpp is
-available:
+available and the environment points at a real binary + model; otherwise it
+skips:
 
 ```sh
 VINV_WHISPER_BIN=…/whisper-cli VINV_WHISPER_MODEL=…/ggml-small-q5_1.bin \
@@ -124,10 +134,11 @@ were resolved conservatively and are documented where they land:
 - Latency is measured **utterance-end → readback** (§8.4) and a persistent
   miss suggests the smaller model.
 
-## Not in this repository
+## Not production-ready in this repository
 
-The native shells (SwiftUI / Jetpack Compose), the whisper.cpp JNI/ObjC
-glue, on-device GPU acceleration flags (§8.5), TTS readback voices, the
-wake-phrase keyword spotter, and the production PromiseGrid agent transport
-(§11 Phase B — the message format and tokens are here in `grid`; the agent
-protocol is upstream) are platform work tracked in `TODO/TODO.md`.
+The repository includes first-pass Android and iOS shell scaffolds plus the
+shared whisper.cpp bridge code, but it does **not** yet include a device-built,
+device-validated native app. On-device GPU acceleration flags (§8.5), TTS voice
+integration, the wake-phrase keyword spotter, and the production PromiseGrid
+agent transport (§11 Phase B — the message format and tokens are here in `grid`;
+the agent protocol is upstream) remain tracked work in `TODO/TODO.md`.

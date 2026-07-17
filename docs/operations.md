@@ -1,8 +1,9 @@
 # Operations & field-trial guide
 
 How to stand up a pilot, enroll devices, load reference data, and run the
-MVP acceptance field trial (spec §15). Assumes the Go core plus one of the
-shells is built (see `android/README.md` / `ios/README.md`).
+MVP acceptance field trial (spec §15). The desktop CLI can exercise the core
+and backend flow today; the actual walking field trial still assumes one of the
+native shells has been built (see `android/README.md` / `ios/README.md`).
 
 ## 1. Backend
 

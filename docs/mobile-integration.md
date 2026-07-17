@@ -12,6 +12,10 @@ gomobile bind -target=ios -o VoiceInventory.xcframework ./mobile
 Everything crosses the boundary as strings, numbers, `[]byte`, and two
 small interfaces the shell implements. Structured data is JSON.
 
+Status note: the Go bind surface is tested in this repo, while the native
+Android and iOS shells under `android/` and `ios/` are scaffolded first-pass
+integrations that still need their first real SDK/Xcode build.
+
 ## 1. Boot
 
 ```kotlin

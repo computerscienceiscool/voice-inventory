@@ -1,7 +1,7 @@
 # Roadmap — what needs to be done
 
-The Go core (spec §9.1) is complete, reviewed, and tested: 86 of the 113
-tracked items in [TODO/TODO.md](../TODO/TODO.md) are done. The 27 open
+The Go core (spec §9.1) is complete, reviewed, and tested: 96 of the 124
+tracked items in [TODO/TODO.md](../TODO/TODO.md) are done. The 28 open
 items all fall into four buckets. Numbers reference the todo.
 
 ## 1. Native app work — needs Android/iOS toolchains
@@ -10,8 +10,8 @@ The Go side of each item is finished and documented in
 [mobile-integration.md](mobile-integration.md), and shell scaffolds now
 exist for both platforms — `android/` (capture, review with edit,
 settings, help; JNI bridge desktop-verified) and `ios/` (capture, review,
-settings, help; same verified C bridge) — both unbuilt. What's left is the first SDK/Xcode
-build and device bring-up.
+settings, help; same verified C bridge) — both unbuilt. What's left is the
+first SDK/Xcode build and device bring-up.
 
 | Item | Work | Notes |
 |------|------|-------|
